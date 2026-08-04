@@ -55,18 +55,32 @@ function getHeader(headers, name) {
  * Clean & normalize merchant name from sender/subject.
  */
 function cleanMerchantName(sender, subject) {
-  const text = `${sender} ${subject}`.toLowerCase();
+  const text = `${sender || ''} ${subject || ''}`.toLowerCase();
+
+  // Full context matching across both sender and subject text
   if (text.includes('swiggy')) return 'Swiggy';
   if (text.includes('zomato')) return 'Zomato';
+  if (text.includes('blinkit')) return 'Blinkit';
+  if (text.includes('zepto')) return 'Zepto';
   if (text.includes('amazon')) return 'Amazon';
   if (text.includes('flipkart')) return 'Flipkart';
+  if (text.includes('myntra')) return 'Myntra';
+  if (text.includes('ajio')) return 'Ajio';
+  if (text.includes('nykaa')) return 'Nykaa';
   if (text.includes('uber')) return 'Uber';
   if (text.includes('ola')) return 'Ola';
+  if (text.includes('rapido')) return 'Rapido';
   if (text.includes('netflix')) return 'Netflix';
   if (text.includes('spotify')) return 'Spotify';
+  if (text.includes('airtel')) return 'Airtel';
+  if (text.includes('jio')) return 'Jio';
+  if (text.includes('bescom')) return 'Bescom';
+  if (text.includes('cred')) return 'CRED';
   if (text.includes('hdfc')) return 'HDFC Bank';
   if (text.includes('icici')) return 'ICICI Bank';
   if (text.includes('sbi')) return 'SBI Card';
+  if (text.includes('axis')) return 'Axis Bank';
+  if (text.includes('kotak')) return 'Kotak Bank';
   if (text.includes('phonepe')) return 'PhonePe';
   if (text.includes('paytm')) return 'Paytm';
   if (text.includes('gpay') || text.includes('google pay')) return 'Google Pay';

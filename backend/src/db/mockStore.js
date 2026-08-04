@@ -59,25 +59,82 @@ const DEMO_TRANSACTIONS = [
 ];
 
 const CATEGORY_MAP = {
+  // Food & Dining Senders
   Swiggy: 'Food',
   Zomato: 'Food',
+  Blinkit: 'Food',
+  Zepto: 'Food',
+  Instamart: 'Food',
+  Dominos: 'Food',
+  Pizza: 'Food',
+  McDonalds: 'Food',
+  KFC: 'Food',
+  Starbucks: 'Food',
+  Dineout: 'Food',
+  Eats: 'Food',
+
+  // Shopping & E-Commerce Senders
   Amazon: 'Shopping',
   Flipkart: 'Shopping',
+  Myntra: 'Shopping',
+  Ajio: 'Shopping',
+  Nykaa: 'Shopping',
+  Tata: 'Shopping',
+  Decathlon: 'Shopping',
+  Croma: 'Shopping',
+  Reliance: 'Shopping',
+  Shoppers: 'Shopping',
+
+  // Transport & Travel Senders
   Uber: 'Transport',
   Ola: 'Transport',
+  Rapido: 'Transport',
+  IRCTC: 'Transport',
+  MakeMyTrip: 'Transport',
+  Goibibo: 'Transport',
+  Indigo: 'Transport',
+  AirIndia: 'Transport',
+  Vistara: 'Transport',
+  Cleartrip: 'Transport',
+  redBus: 'Transport',
+
+  // Entertainment & Subscription Senders
   Netflix: 'Entertainment',
   Spotify: 'Subscriptions',
+  Youtube: 'Subscriptions',
+  Prime: 'Subscriptions',
+  Hotstar: 'Entertainment',
+  BookMyShow: 'Entertainment',
+  PVR: 'Entertainment',
+  INOX: 'Entertainment',
   Cursor: 'Subscriptions',
+  OpenAI: 'Subscriptions',
+  ChatGPT: 'Subscriptions',
+  Github: 'Subscriptions',
+  Apple: 'Subscriptions',
+
+  // Bills & Utilities Senders
   Bescom: 'Bills',
+  Airtel: 'Bills',
+  Jio: 'Bills',
+  Vodafone: 'Bills',
+  CRED: 'Bills',
+  BillDesk: 'Bills',
   'HDFC Bank': 'Bills',
   'ICICI Bank': 'Bills',
   'SBI Card': 'Bills',
+  'Axis Bank': 'Bills',
+  'Kotak Bank': 'Bills',
+  'PhonePe': 'Bills',
+  'Paytm': 'Bills',
+  'Google Pay': 'Bills',
 };
 
 function inferCategory(merchant) {
   if (!merchant) return 'Other';
+  const mLower = merchant.toLowerCase();
   for (const [key, cat] of Object.entries(CATEGORY_MAP)) {
-    if (merchant.toLowerCase().includes(key.toLowerCase())) {
+    if (mLower.includes(key.toLowerCase())) {
       return cat;
     }
   }
