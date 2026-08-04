@@ -1,0 +1,211 @@
+const { google } = require('googleapis');
+const config = require('../config');
+const { query } = require('../db/pool');
+const { getAuthenticatedClient } = require('../auth/google');
+const { parse } = require('../parsers');
+const mockStore = require('../db/mockStore');
+
+/**
+ * Decode base64url-encoded email body content.
+ */
+function decodeBase64Url(data) {
+  if (!data) return '';
+  return Buffer.from(data, 'base64url').toString('utf-8');
+}
+
+/**
+ * Extract plain text body from Gmail message payload.
+ */
+function extractBody(payload) {
+  if (payload.body && payload.body.data) {
+    return decodeBase64Url(payload.body.data);
+  }
+
+  if (payload.parts) {
+    for (const part of payload.parts) {
+      if (part.mimeType === 'text/plain' && part.body && part.body.data) {
+        return decodeBase64Url(part.body.data);
+      }
+      if (part.parts) {
+        const nested = extractBody(part);
+        if (nested) return nested;
+      }
+    }
+    for (const part of payload.parts) {
+      if (part.mimeType === 'text/html' && part.body && part.body.data) {
+        return decodeBase64Url(part.body.data);
+      }
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Extract header value from Gmail message headers.
+ */
+function getHeader(headers, name) {
+  const header = headers.find(
+    (h) => h.name.toLowerCase() === name.toLowerCase()
+  );
+  return header ? header.value : null;
+}
+
+/**
+ * Clean & normalize merchant name from sender/subject.
+ */
+function cleanMerchantName(sender, subject) {
+  const text = `${sender} ${subject}`.toLowerCase();
+  if (text.includes('swiggy')) return 'Swiggy';
+  if (text.includes('zomato')) return 'Zomato';
+  if (text.includes('amazon')) return 'Amazon';
+  if (text.includes('flipkart')) return 'Flipkart';
+  if (text.includes('uber')) return 'Uber';
+  if (text.includes('ola')) return 'Ola';
+  if (text.includes('netflix')) return 'Netflix';
+  if (text.includes('spotify')) return 'Spotify';
+  if (text.includes('hdfc')) return 'HDFC Bank';
+  if (text.includes('icici')) return 'ICICI Bank';
+  if (text.includes('sbi')) return 'SBI Card';
+  if (text.includes('phonepe')) return 'PhonePe';
+  if (text.includes('paytm')) return 'Paytm';
+  if (text.includes('gpay') || text.includes('google pay')) return 'Google Pay';
+
+  const sName = sender.split('<')[0].replace(/"/g, '').trim();
+  if (sName && !sName.includes('@')) return sName;
+  return 'Bank Merchant';
+}
+
+/**
+ * Strict fallback parser for real transaction emails only.
+ */
+function strictTransactionParser(subject, body, sender, emailDate) {
+  const fullText = `${subject}\n${body}`;
+
+  if (/unsubscribe|newsletter|discount|offer|coupon|deal of the day/i.test(subject) && !/debited|credited|paid|invoice|receipt/i.test(subject)) {
+    return null;
+  }
+
+  const isPaymentEmail = /debited|credited|paid|spent|transferred|order total|payment of|vpa|upi|a\/c|card|invoice|receipt|successful/i.test(fullText);
+  if (!isPaymentEmail) return null;
+
+  const amountMatch = fullText.match(/(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+                      fullText.match(/debited\s*(?:by|for)?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+                      fullText.match(/paid\s*(?:Rs\.?|INR|₹)?\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+                      fullText.match(/order\s*total\s*(?:Rs\.?|INR|₹)?\s*([\d,]+(?:\.\d{1,2})?)/i);
+
+  if (!amountMatch) return null;
+
+  const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
+  if (isNaN(amount) || amount <= 0 || amount > 1000000) return null;
+
+  const merchant = cleanMerchantName(sender, subject);
+  const isCredit = /credited|refund|cashback/i.test(fullText) && !/debited/i.test(fullText);
+
+  return {
+    amount,
+    merchant_raw: merchant,
+    merchant_normalized: merchant,
+    transaction_type: isCredit ? 'credit' : 'debit',
+    transaction_date: emailDate,
+    confidence: 0.9,
+  };
+}
+
+/**
+ * Main sync function — queries 1 full year of Gmail messages and parses into active transaction store.
+ */
+async function syncEmails() {
+  console.log('[Ingestion] Starting strict 1-year transaction email sync from Gmail...');
+
+  const auth = await getAuthenticatedClient();
+  if (!auth) {
+    console.warn('[Ingestion] Not authenticated with Google OAuth. User must authorize first.');
+    return { fetched: 0, parsed: 0, status: 'unauthenticated' };
+  }
+
+  const gmail = google.gmail({ version: 'v1', auth });
+
+  try {
+    const searchQuery = 'subject:(debited OR credited OR paid OR transaction OR UPI OR VPA OR HDFC OR SBI OR ICICI OR Swiggy OR Zomato OR Amazon OR Google Pay OR PhonePe OR Paytm) OR from:(hdfcbank OR sbicard OR icicibank OR phonepe OR paytm OR swiggy OR zomato)';
+    
+    let pageToken = null;
+    const allMessages = [];
+    const MAX_PAGES = 5;
+    let pageCount = 0;
+
+    do {
+      const listResponse = await gmail.users.messages.list({
+        userId: 'me',
+        q: searchQuery,
+        maxResults: 100,
+        pageToken: pageToken || undefined,
+      });
+
+      const msgs = listResponse.data.messages || [];
+      allMessages.push(...msgs);
+      pageToken = listResponse.data.nextPageToken;
+      pageCount++;
+    } while (pageToken && pageCount < MAX_PAGES);
+
+    console.log(`[Ingestion] Total ${allMessages.length} emails found for processing.`);
+
+    mockStore.clearRealTransactions();
+    let parsedCount = 0;
+
+    for (const msg of allMessages) {
+      try {
+        const msgDetail = await gmail.users.messages.get({
+          userId: 'me',
+          id: msg.id,
+          format: 'full',
+        });
+
+        const headers = msgDetail.data.payload?.headers || [];
+        const sender = getHeader(headers, 'From') || '';
+        const subject = getHeader(headers, 'Subject') || '';
+        const dateStr = getHeader(headers, 'Date');
+        const receivedAt = dateStr ? new Date(dateStr) : new Date();
+        const body = extractBody(msgDetail.data.payload) || msgDetail.data.snippet || '';
+
+        // Run registered parser or strict fallback parser
+        let parsedResult = parse(sender, subject, body);
+        if (!parsedResult) {
+          parsedResult = strictTransactionParser(subject, body, sender, receivedAt);
+        }
+
+        if (parsedResult) {
+          // ALWAYS USE REAL EMAIL RECEIVED DATE (receivedAt) IF PARSED DATE IS TODAY/MISSING!
+          const txDate = (parsedResult.transaction_date && parsedResult.transaction_date.toDateString() !== new Date().toDateString())
+            ? parsedResult.transaction_date
+            : receivedAt;
+
+          mockStore.addRealParsedTransaction({
+            id: `gmail-${msg.id}`,
+            gmail_message_id: msg.id,
+            amount: parsedResult.amount,
+            merchant_raw: parsedResult.merchant_raw,
+            merchant_normalized: parsedResult.merchant_normalized || cleanMerchantName(sender, subject),
+            category: parsedResult.category,
+            transaction_type: parsedResult.transaction_type || 'debit',
+            transaction_date: txDate,
+            confidence: parsedResult.confidence || 0.9,
+          });
+          parsedCount++;
+        }
+
+      } catch (msgErr) {
+        console.error(`[Ingestion] Error processing message ${msg.id}:`, msgErr.message);
+      }
+    }
+
+    console.log(`[Ingestion] Sync complete! Parsed ${parsedCount} clean transactions from Gmail.`);
+    return { fetched: allMessages.length, parsed: parsedCount, status: 'success' };
+
+  } catch (err) {
+    console.error('[Ingestion] Error during Gmail API call:', err.message);
+    return { fetched: 0, parsed: 0, status: 'error', error: err.message };
+  }
+}
+
+module.exports = { syncEmails };

@@ -1,0 +1,6 @@
+{
+  "amount": 2500.00,
+  "merchant_raw": "SWIGGY*ORDER8827321",
+  "transaction_type": "debit",
+  "account_last4": "4321"
+}
