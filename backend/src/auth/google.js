@@ -122,9 +122,26 @@ async function getAuthenticatedClient() {
   return oauth2Client;
 }
 
+/**
+ * Clear stored OAuth tokens on disconnect/logout.
+ */
+async function clearAuthToken() {
+  inMemoryRefreshToken = null;
+  if (fs.existsSync(TOKEN_FILE)) {
+    try {
+      fs.writeFileSync(TOKEN_FILE, JSON.stringify({ google_refresh: null, updated_at: new Date() }), 'utf8');
+    } catch (e) {}
+  }
+  try {
+    await query("DELETE FROM auth_tokens WHERE token_type = 'google_refresh'");
+  } catch (e) {}
+  console.log('[Auth] OAuth token cleared');
+}
+
 module.exports = {
   createOAuth2Client,
   getAuthUrl,
   handleCallback,
   getAuthenticatedClient,
+  clearAuthToken,
 };

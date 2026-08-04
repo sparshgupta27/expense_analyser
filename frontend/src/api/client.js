@@ -51,4 +51,7 @@ export const getAuthStatus = () =>
 export const triggerSync = () =>
   api.post('/api/sync').then((r) => r.data);
 
+export const disconnectAuth = () =>
+  api.post('/auth/logout').then((r) => r.data);
+
 export default api;

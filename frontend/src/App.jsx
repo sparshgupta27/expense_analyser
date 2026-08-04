@@ -76,7 +76,11 @@ export default function App() {
     if (params.get('connected') === 'true') {
       localStorage.setItem('gmail_connected', 'true');
       setIsConnected(true);
-      setAuthBanner('Gmail Account Connected Successfully!');
+      setAuthBanner('Gmail Account Connected & Synchronized Successfully!');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get('error')) {
+      setAuthBanner('Authorization was cancelled or failed.');
+      window.history.replaceState({}, document.title, window.location.pathname);
     } else if (localStorage.getItem('gmail_connected') === 'true') {
       setIsConnected(true);
     }
@@ -86,6 +90,9 @@ export default function App() {
         if (res?.authenticated) {
           setIsConnected(true);
           localStorage.setItem('gmail_connected', 'true');
+        } else {
+          setIsConnected(false);
+          localStorage.removeItem('gmail_connected');
         }
       })
       .catch(() => {});
@@ -135,10 +142,15 @@ export default function App() {
     }
   };
 
-  const handleDisconnect = () => {
+  const handleDisconnect = async () => {
+    try {
+      await disconnectAuth();
+    } catch (e) {}
     localStorage.removeItem('gmail_connected');
     setIsConnected(false);
     setDropdownOpen(false);
+    setAuthBanner('Account disconnected.');
+    window.location.reload();
   };
 
   const renderPage = () => {
