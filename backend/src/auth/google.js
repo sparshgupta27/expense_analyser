@@ -77,12 +77,33 @@ async function handleCallback(code) {
 async function getAuthenticatedClient() {
   let tokenValue = inMemoryRefreshToken;
 
+  // Always read latest token from file fallback
+  if (fs.existsSync(TOKEN_FILE)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
+      if (data.google_refresh) {
+        tokenValue = data.google_refresh;
+        inMemoryRefreshToken = tokenValue;
+      }
+    } catch (e) {}
+  }
+
   try {
     const result = await query(
       "SELECT token_value FROM auth_tokens WHERE token_type = 'google_refresh'"
     );
-    if (result.rows.length > 0) {
-      tokenValue = result.rows[0].token_value;
+    if (result.rows.length > 0 && result.rows[0].token_value) {
+      if (!tokenValue) {
+        tokenValue = result.rows[0].token_value;
+      } else if (result.rows[0].token_value !== tokenValue) {
+        // Sync Postgres if file token is newer
+        await query(
+          `INSERT INTO auth_tokens (token_type, token_value, updated_at)
+           VALUES ('google_refresh', $1, NOW())
+           ON CONFLICT (token_type) DO UPDATE SET token_value = $1, updated_at = NOW()`,
+          [tokenValue]
+        );
+      }
     }
   } catch (e) {
     // Postgres offline, use in-memory / file token fallback
@@ -96,7 +117,6 @@ async function getAuthenticatedClient() {
   const oauth2Client = createOAuth2Client();
   oauth2Client.setCredentials({
     refresh_token: tokenValue,
-    access_token: tokenValue,
   });
 
   return oauth2Client;
