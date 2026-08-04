@@ -49,7 +49,7 @@ export const getAuthStatus = () =>
   api.get('/auth/status').then((r) => r.data);
 
 export const triggerSync = () =>
-  api.post('/api/sync').then((r) => r.data);
+  api.post('/api/sync', {}, { timeout: 120000 }).then((r) => r.data);
 
 export const disconnectAuth = () =>
   api.post('/auth/logout').then((r) => r.data);

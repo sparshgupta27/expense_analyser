@@ -127,10 +127,11 @@ function strictTransactionParser(subject, body, sender, emailDate) {
 }
 
 /**
- * Main sync function — queries 1 full year of Gmail messages and parses into active transaction store.
+ * Main sync function — queries Gmail messages and parses into active transaction store.
+ * Uses parallel batching for speed.
  */
 async function syncEmails() {
-  console.log('[Ingestion] Starting strict 1-year transaction email sync from Gmail...');
+  console.log('[Ingestion] Starting strict transaction email sync from Gmail...');
 
   const auth = await getAuthenticatedClient();
   if (!auth) {
@@ -145,7 +146,7 @@ async function syncEmails() {
     
     let pageToken = null;
     const allMessages = [];
-    const MAX_PAGES = 5;
+    const MAX_PAGES = 3;
     let pageCount = 0;
 
     do {
@@ -189,49 +190,59 @@ async function syncEmails() {
     mockStore.clearRealTransactions();
     let parsedCount = 0;
 
-    for (const msg of allMessages) {
-      try {
-        const msgDetail = await gmail.users.messages.get({
-          userId: 'me',
-          id: msg.id,
-          format: 'full',
-        });
-
-        const headers = msgDetail.data.payload?.headers || [];
-        const sender = getHeader(headers, 'From') || '';
-        const subject = getHeader(headers, 'Subject') || '';
-        const dateStr = getHeader(headers, 'Date');
-        const receivedAt = dateStr ? new Date(dateStr) : new Date();
-        const body = extractBody(msgDetail.data.payload) || msgDetail.data.snippet || '';
-
-        // Run registered parser or strict fallback parser
-        let parsedResult = parse(sender, subject, body);
-        if (!parsedResult) {
-          parsedResult = strictTransactionParser(subject, body, sender, receivedAt);
-        }
-
-        if (parsedResult) {
-          // ALWAYS USE REAL EMAIL RECEIVED DATE (receivedAt) IF PARSED DATE IS TODAY/MISSING!
-          const txDate = (parsedResult.transaction_date && parsedResult.transaction_date.toDateString() !== new Date().toDateString())
-            ? parsedResult.transaction_date
-            : receivedAt;
-
-          mockStore.addRealParsedTransaction({
-            id: `gmail-${msg.id}`,
-            gmail_message_id: msg.id,
-            amount: parsedResult.amount,
-            merchant_raw: parsedResult.merchant_raw,
-            merchant_normalized: parsedResult.merchant_normalized || cleanMerchantName(sender, subject),
-            category: parsedResult.category,
-            transaction_type: parsedResult.transaction_type || 'debit',
-            transaction_date: txDate,
-            confidence: parsedResult.confidence || 0.9,
+    // Process messages in parallel batches of 10 for speed
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
+      const batch = allMessages.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map(async (msg) => {
+          const msgDetail = await gmail.users.messages.get({
+            userId: 'me',
+            id: msg.id,
+            format: 'full',
           });
-          parsedCount++;
-        }
 
-      } catch (msgErr) {
-        console.error(`[Ingestion] Error processing message ${msg.id}:`, msgErr.message);
+          const headers = msgDetail.data.payload?.headers || [];
+          const sender = getHeader(headers, 'From') || '';
+          const subject = getHeader(headers, 'Subject') || '';
+          const dateStr = getHeader(headers, 'Date');
+          const receivedAt = dateStr ? new Date(dateStr) : new Date();
+          const body = extractBody(msgDetail.data.payload) || msgDetail.data.snippet || '';
+
+          // Run registered parser or strict fallback parser
+          let parsedResult = parse(sender, subject, body);
+          if (!parsedResult) {
+            parsedResult = strictTransactionParser(subject, body, sender, receivedAt);
+          }
+
+          if (parsedResult) {
+            const txDate = (parsedResult.transaction_date && parsedResult.transaction_date.toDateString() !== new Date().toDateString())
+              ? parsedResult.transaction_date
+              : receivedAt;
+
+            return {
+              id: `gmail-${msg.id}`,
+              gmail_message_id: msg.id,
+              amount: parsedResult.amount,
+              merchant_raw: parsedResult.merchant_raw,
+              merchant_normalized: parsedResult.merchant_normalized || cleanMerchantName(sender, subject),
+              category: parsedResult.category,
+              transaction_type: parsedResult.transaction_type || 'debit',
+              transaction_date: txDate,
+              confidence: parsedResult.confidence || 0.9,
+            };
+          }
+          return null;
+        })
+      );
+
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value) {
+          mockStore.addRealParsedTransaction(result.value);
+          parsedCount++;
+        } else if (result.status === 'rejected') {
+          console.error(`[Ingestion] Error processing message:`, result.reason?.message || result.reason);
+        }
       }
     }
 
