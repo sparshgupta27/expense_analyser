@@ -30,12 +30,17 @@ function amountsMatch(a, b) {
  */
 function matchesInterval(intervalDays) {
   const knownIntervals = [7, 14, 28, 30, 31, 90, 365];
+  let bestMatch = null;
+  let minDiff = Infinity;
+
   for (const known of knownIntervals) {
-    if (Math.abs(intervalDays - known) <= dayTolerance) {
-      return known;
+    const diff = Math.abs(intervalDays - known);
+    if (diff <= dayTolerance && diff < minDiff) {
+      minDiff = diff;
+      bestMatch = known;
     }
   }
-  return null;
+  return bestMatch;
 }
 
 /**
@@ -210,4 +215,4 @@ async function runSubscriptionDetection() {
   return detectSubscriptions();
 }
 
-module.exports = { runSubscriptionDetection };
+module.exports = { runSubscriptionDetection, amountsMatch, matchesInterval };

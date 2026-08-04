@@ -143,6 +143,7 @@ function inferCategory(merchant) {
 
 function clearRealTransactions() {
   realTransactions = [];
+  isRealDataActive = false;
 }
 
 function addRealParsedTransaction(tx) {

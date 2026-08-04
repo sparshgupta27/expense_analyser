@@ -75,7 +75,6 @@ function cleanMerchantName(sender, subject) {
   if (text.includes('airtel')) return 'Airtel';
   if (text.includes('jio')) return 'Jio';
   if (text.includes('bescom')) return 'Bescom';
-  if (text.includes('cred')) return 'CRED';
   if (text.includes('hdfc')) return 'HDFC Bank';
   if (text.includes('icici')) return 'ICICI Bank';
   if (text.includes('sbi')) return 'SBI Card';
@@ -84,6 +83,7 @@ function cleanMerchantName(sender, subject) {
   if (text.includes('phonepe')) return 'PhonePe';
   if (text.includes('paytm')) return 'Paytm';
   if (text.includes('gpay') || text.includes('google pay')) return 'Google Pay';
+  if (/\bcred\b|cred\.club/i.test(text)) return 'CRED';
 
   const sName = sender.split('<')[0].replace(/"/g, '').trim();
   if (sName && !sName.includes('@')) return sName;
@@ -255,4 +255,4 @@ async function syncEmails() {
   }
 }
 
-module.exports = { syncEmails };
+module.exports = { syncEmails, cleanMerchantName, strictTransactionParser };
