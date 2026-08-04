@@ -6,7 +6,7 @@ import {
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import Subscriptions from './pages/Subscriptions';
-import { getAuthStatus, triggerSync } from './api/client';
+import { getAuthStatus, triggerSync, disconnectAuth } from './api/client';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -64,20 +64,40 @@ function getLocalYearMonth(d = new Date()) {
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard');
   const [selectedMonth, setSelectedMonth] = useState(getLocalYearMonth());
-  const [timeRange, setTimeRange] = useState(1); // 1, 3, 6, 12 months
+  const [timeRange, setTimeRange] = useState(1);
   const [authBanner, setAuthBanner] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncOverlay, setSyncOverlay] = useState(false);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('connected') === 'true') {
+    const justConnected = params.get('connected') === 'true';
+    const needsAutoSync = params.get('autosync') === 'true';
+
+    if (justConnected) {
       localStorage.setItem('gmail_connected', 'true');
       setIsConnected(true);
-      setAuthBanner('Gmail Account Connected & Synchronized Successfully!');
       window.history.replaceState({}, document.title, window.location.pathname);
+
+      if (needsAutoSync) {
+        // Show full-screen syncing overlay and trigger sync
+        setSyncOverlay(true);
+        triggerSync()
+          .then(() => {
+            setSyncOverlay(false);
+            setAuthBanner('Gmail connected & emails synced successfully!');
+            window.location.reload();
+          })
+          .catch(() => {
+            setSyncOverlay(false);
+            setAuthBanner('Gmail connected. Sync may still be processing.');
+          });
+      } else {
+        setAuthBanner('Gmail Account Connected Successfully!');
+      }
     } else if (params.get('error')) {
       setAuthBanner('Authorization was cancelled or failed.');
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -131,14 +151,18 @@ export default function App() {
 
   const handleSyncNow = async () => {
     setIsSyncing(true);
+    setSyncOverlay(true);
+    setDropdownOpen(false);
     try {
       await triggerSync();
+      setSyncOverlay(false);
       setAuthBanner('Sync completed! Clean transaction history updated.');
+      window.location.reload();
     } catch (err) {
+      setSyncOverlay(false);
       setAuthBanner('Sync triggered.');
     } finally {
       setIsSyncing(false);
-      setDropdownOpen(false);
     }
   };
 
@@ -168,6 +192,20 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      {/* Full-screen syncing overlay */}
+      {syncOverlay && (
+        <div className="fixed inset-0 z-[9999] bg-[#FAF8F3]/95 backdrop-blur-sm flex flex-col items-center justify-center">
+          <div className="flex flex-col items-center gap-5 p-10 rounded-2xl bg-white border border-[#E8E3D8] shadow-lg max-w-sm mx-4">
+            <div className="w-14 h-14 border-4 border-[#E8E3D8] border-t-[#2D5C4E] rounded-full animate-spin" />
+            <div className="text-center">
+              <h3 className="text-lg font-bold text-[#1C1B19] tracking-tight">Syncing Emails</h3>
+              <p className="text-sm text-[#6C6A65] mt-1.5">Scanning your Gmail for transaction emails...</p>
+              <p className="text-xs text-[#6C6A65] mt-3 font-mono">This may take a moment</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row min-h-screen bg-[#FAF8F3] text-[#1C1B19] font-sans">
         {/* Sidebar / Navigation Header */}
         <aside className="w-full md:w-64 bg-white border-b md:border-b-0 md:border-r border-[#E8E3D8] p-5 flex flex-col md:fixed md:inset-y-0 z-50 shadow-[1px_0_3px_rgba(28,27,25,0.02)]">

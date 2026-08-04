@@ -28,9 +28,9 @@ router.get('/google/callback', async (req, res) => {
 
   try {
     await handleCallback(code);
-    console.log('[Auth] Google OAuth succeeded — running immediate sync for new account...');
-    await syncEmails();
-    res.redirect('http://localhost:3000/?connected=true');
+    console.log('[Auth] Google OAuth succeeded — redirecting to dashboard for client-side sync...');
+    // Redirect immediately, let the frontend trigger sync with a loading overlay
+    res.redirect('http://localhost:3000/?connected=true&autosync=true');
   } catch (err) {
     console.error('[Auth] OAuth callback error:', err.message);
     res.redirect('http://localhost:3000/?error=auth_failed');
