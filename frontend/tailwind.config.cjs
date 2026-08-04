@@ -7,29 +7,39 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        border: 'hsl(var(--border))',
-        background: 'hsl(var(--background))',
-        foreground: 'hsl(var(--foreground))',
-        card: {
-          DEFAULT: '#12121a',
-          hover: '#1a1a28',
+        paper: {
+          DEFAULT: '#FAF8F3',
+          card: '#FFFFFF',
+          muted: '#F5F2EA',
+          border: '#E8E3D8',
         },
-        slate: {
-          950: '#0a0a0f',
-          900: '#12121a',
-          850: '#161624',
-          800: '#1a1a2e',
-          700: '#252540',
+        ink: {
+          DEFAULT: '#1C1B19',
+          muted: '#6C6A65',
+          light: '#8C8A83',
         },
-        indigo: {
-          500: '#818cf8',
-          600: '#6366f1',
+        ledger: {
+          green: '#2D5C4E',
+          light: '#EBF3F0',
+        },
+        brick: {
+          red: '#B33F3F',
+          light: '#FBF0F0',
+        },
+        gold: {
+          accent: '#C9A961',
+          text: '#8C6D23',
+          light: '#FAF5EA',
         },
       },
+      fontFamily: {
+        mono: ['"IBM Plex Mono"', 'monospace'],
+        sans: ['Inter', 'sans-serif'],
+      },
       borderRadius: {
-        lg: '12px',
-        md: '8px',
-        sm: '6px',
+        lg: '10px',
+        md: '6px',
+        sm: '4px',
       },
     },
   },

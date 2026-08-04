@@ -10,7 +10,7 @@ export function Card({ className, children, ...props }) {
   return (
     <div
       className={cn(
-        'rounded-xl border border-slate-800/80 bg-[#12121a] p-6 shadow-sm transition-all hover:border-slate-700/80',
+        'rounded-lg border border-[#E8E3D8] bg-white p-5 shadow-[0_1px_3px_rgba(28,27,25,0.04)] transition-all hover:border-[#D8D2C4]',
         className
       )}
       {...props}
@@ -23,7 +23,7 @@ export function Card({ className, children, ...props }) {
 export function CardTitle({ className, children, ...props }) {
   return (
     <h3
-      className={cn('text-xs font-semibold uppercase tracking-wider text-slate-400', className)}
+      className={cn('text-xs font-semibold uppercase tracking-wider text-[#6C6A65]', className)}
       {...props}
     >
       {children}
@@ -34,7 +34,7 @@ export function CardTitle({ className, children, ...props }) {
 export function Metric({ className, children, ...props }) {
   return (
     <div
-      className={cn('text-2xl sm:text-3xl font-extrabold tracking-tight text-white mt-1', className)}
+      className={cn('text-2xl sm:text-3xl font-bold font-mono tracking-tight text-[#1C1B19] mt-1', className)}
       {...props}
     >
       {children}
@@ -44,8 +44,9 @@ export function Metric({ className, children, ...props }) {
 
 export function Text({ className, children, ...props }) {
   return (
-    <p className={cn('text-sm text-slate-400 mt-1', className)} {...props}>
+    <p className={cn('text-sm text-[#6C6A65] mt-1', className)} {...props}>
       {children}
     </p>
   );
 }
+

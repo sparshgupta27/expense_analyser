@@ -1,27 +1,59 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 240 25% 4%;
-    --foreground: 240 10% 96%;
+    --paper-bg: #FAF8F3;
+    --paper-card: #FFFFFF;
+    --paper-border: #E8E3D8;
+    --ink-text: #1C1B19;
+    --ink-muted: #6C6A65;
+    --ledger-green: #2D5C4E;
+    --brick-red: #B33F3F;
+    --gold-accent: #C9A961;
+    --gold-text: #8C6D23;
   }
 
   body {
-    background-color: #0a0a0f !important;
-    color: #f0f0f5 !important;
+    background-color: #FAF8F3 !important;
+    color: #1C1B19 !important;
     font-family: 'Inter', sans-serif;
+  }
+
+  .font-mono {
+    font-family: 'IBM Plex Mono', monospace !important;
   }
 }
 
-/* Custom Category Badges */
-.category-badge-food { background-color: rgba(249, 115, 22, 0.15); color: #f97316; border: 1px solid rgba(249, 115, 22, 0.3); }
-.category-badge-shopping { background-color: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3); }
-.category-badge-bills { background-color: rgba(6, 182, 212, 0.15); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.3); }
-.category-badge-transport { background-color: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
-.category-badge-entertainment { background-color: rgba(236, 72, 153, 0.15); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.3); }
-.category-badge-subscriptions { background-color: rgba(234, 179, 8, 0.15); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); }
-.category-badge-other { background-color: rgba(100, 116, 139, 0.15); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
+/* Custom Passbook & Paper Utilities */
+.paper-card {
+  background-color: #FFFFFF;
+  border: 1px solid #E8E3D8;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(28, 27, 25, 0.04);
+}
+
+.ticket-stub {
+  background-color: #FFFFFF;
+  border: 1px solid #E8E3D8;
+  border-left: 3px dashed #C9A961;
+  position: relative;
+}
+
+.ticket-stub-disabled {
+  background-color: #F8F6F0;
+  border: 1px solid #E5E0D4;
+  border-left: 3px dashed #D0CBBF;
+  opacity: 0.65;
+}
+
+/* Custom Category Badges - Warm Paper Palette */
+.category-badge-food { background-color: #F8EFE9; color: #A35C37; border: 1px solid #EADAD0; }
+.category-badge-shopping { background-color: #F2EEF7; color: #5B4A78; border: 1px solid #DFD7EB; }
+.category-badge-bills { background-color: #EBF3F0; color: #2D5C4E; border: 1px solid #D2E4DC; }
+.category-badge-transport { background-color: #EDF3F7; color: #3A6B88; border: 1px solid #D3E2EC; }
+.category-badge-entertainment { background-color: #F9EFF2; color: #A84B68; border: 1px solid #EDD5DE; }
+.category-badge-subscriptions { background-color: #FAF5EA; color: #8C6D23; border: 1px solid #EFE2C5; }
+.category-badge-other { background-color: #F3F3F1; color: #6C6A65; border: 1px solid #E2E1DD; }
+

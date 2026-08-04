@@ -3,10 +3,10 @@ import { cn } from './Card';
 import { AlertTriangle, AlertCircle, Info, Ghost } from 'lucide-react';
 
 const alertVariants = {
-  warning: 'bg-amber-500/10 border-amber-500/30 text-amber-300',
-  danger: 'bg-rose-500/10 border-rose-500/30 text-rose-300',
-  ghost: 'bg-amber-500/15 border-amber-400/40 text-amber-200',
-  info: 'bg-indigo-500/10 border-indigo-500/30 text-indigo-300',
+  warning: 'bg-[#FAF5EA] border-[#EFE2C5] text-[#8C6D23]',
+  danger: 'bg-[#FBF0F0] border-[#F4D6D6] text-[#B33F3F]',
+  ghost: 'bg-[#F8F6F0] border-[#D0CBBF] text-[#8C6D23]',
+  info: 'bg-[#EBF3F0] border-[#D2E4DC] text-[#2D5C4E]',
 };
 
 const icons = {
@@ -22,16 +22,17 @@ export function Alert({ variant = 'warning', title, children, className }) {
   return (
     <div
       className={cn(
-        'flex items-start gap-3 p-4 rounded-xl border mb-5 transition-all animate-fadeIn',
+        'flex items-start gap-3 p-4 rounded-lg border mb-4 transition-all',
         alertVariants[variant] || alertVariants.warning,
         className
       )}
     >
-      <IconComponent className="w-5 h-5 mt-0.5 flex-shrink-0" />
+      <IconComponent className="w-5 h-5 mt-0.5 flex-shrink-0 opacity-90" />
       <div className="flex-1 text-sm leading-relaxed">
-        {title && <div className="font-semibold mb-0.5">{title}</div>}
+        {title && <div className="font-semibold mb-0.5 text-[#1C1B19]">{title}</div>}
         <div>{children}</div>
       </div>
     </div>
   );
 }
+
