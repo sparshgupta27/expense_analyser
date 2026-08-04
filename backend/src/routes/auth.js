@@ -1,5 +1,6 @@
 const express = require('express');
 const { getAuthUrl, handleCallback, getAuthenticatedClient } = require('../auth/google');
+const { syncEmails } = require('../services/gmailIngestion');
 
 const router = express.Router();
 
@@ -14,7 +15,7 @@ router.get('/google', (req, res) => {
 
 /**
  * GET /auth/google/callback
- * Handles OAuth callback, exchanges code for tokens, and redirects to dashboard.
+ * Handles OAuth callback, exchanges code for tokens, runs automatic email sync, and redirects to dashboard.
  */
 router.get('/google/callback', async (req, res) => {
   const { code } = req.query;
@@ -25,6 +26,9 @@ router.get('/google/callback', async (req, res) => {
 
   try {
     await handleCallback(code);
+    // Automatically trigger email sync for newly connected account
+    console.log('[Auth] Google OAuth succeeded — running immediate sync for new account...');
+    await syncEmails();
     // Redirect user back to frontend dashboard with success flag
     res.redirect('http://localhost:3000/?connected=true');
   } catch (err) {

@@ -33,7 +33,7 @@ function getAuthUrl() {
   const oauth2Client = createOAuth2Client();
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'consent',
+    prompt: 'select_account consent',
     scope: config.google.scopes,
   });
 }

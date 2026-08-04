@@ -27,6 +27,15 @@ const CATEGORY_COLORS = {
 
 const fmt = (v) => '₹' + Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
+const formatMonthLabel = (monthStr) => {
+  if (!monthStr || !monthStr.includes('-')) return monthStr;
+  const [y, m] = monthStr.split('-').map(Number);
+  const d = new Date(y, m - 1, 1);
+  const monthName = d.toLocaleString('en-US', { month: 'short' });
+  const shortYear = String(y).slice(-2);
+  return `${monthName} '${shortYear}`;
+};
+
 export default function Dashboard({ month, range = 1 }) {
   const [summary, setSummary] = useState(null);
   const [trend, setTrend] = useState([]);
@@ -79,7 +88,8 @@ export default function Dashboard({ month, range = 1 }) {
   const safeInsights = Array.isArray(insights) ? insights : [];
 
   const trendData = safeTrend.map((t) => ({
-    month: t.month?.substring(5) || '',
+    month: formatMonthLabel(t.month),
+    rawMonth: t.month,
     spent: parseFloat(t.total_debit || 0),
     income: parseFloat(t.total_credit || 0),
   }));
@@ -242,8 +252,8 @@ export default function Dashboard({ month, range = 1 }) {
                     contentStyle={{ backgroundColor: '#FFFFFF', borderColor: '#E8E3D8', borderRadius: '6px', fontSize: '12px', fontFamily: 'IBM Plex Mono' }}
                     formatter={(v, name) => [fmt(v), name === 'spent' ? 'Debits' : 'Credits']}
                   />
-                  <Area type="monotone" dataKey="spent" stroke="#B33F3F" strokeWidth={2} fill="url(#ledgerSpentGrad)" name="spent" />
-                  <Area type="monotone" dataKey="income" stroke="#2D5C4E" strokeWidth={2} fill="url(#ledgerIncomeGrad)" name="income" />
+                  <Area type="linear" dataKey="spent" stroke="#B33F3F" strokeWidth={2} fill="url(#ledgerSpentGrad)" name="spent" dot={{ r: 3, fill: '#B33F3F' }} activeDot={{ r: 5 }} />
+                  <Area type="linear" dataKey="income" stroke="#2D5C4E" strokeWidth={2} fill="url(#ledgerIncomeGrad)" name="income" dot={{ r: 3, fill: '#2D5C4E' }} activeDot={{ r: 5 }} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (

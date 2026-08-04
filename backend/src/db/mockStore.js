@@ -241,6 +241,7 @@ function getStoreMerchants(month, rangeMonths = 1) {
 
 function getStoreMonthlyTrend(rangeMonths = 12) {
   const allTxs = isRealDataActive && realTransactions.length > 0 ? realTransactions : DEMO_TRANSACTIONS;
+  const count = parseInt(rangeMonths || 12);
   const monthsMap = {};
 
   allTxs.forEach((t) => {
@@ -257,9 +258,29 @@ function getStoreMonthlyTrend(rangeMonths = 12) {
     monthsMap[monthKey].transaction_count += 1;
   });
 
-  const sortedMonths = Object.values(monthsMap).sort((a, b) => a.month.localeCompare(b.month));
-  const limitCount = parseInt(rangeMonths || 12);
-  return sortedMonths.slice(-limitCount);
+  // Determine latest date in dataset or current date
+  let latestDate = new Date();
+  if (allTxs.length > 0) {
+    const dates = allTxs.map((t) => new Date(t.transaction_date).getTime());
+    latestDate = new Date(Math.max(...dates));
+  }
+
+  // Generate contiguous sequence of `count` months ending at latestDate
+  const result = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const targetDate = new Date(latestDate.getFullYear(), latestDate.getMonth() - i, 1);
+    const y = targetDate.getFullYear();
+    const m = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const monthKey = `${y}-${m}`;
+
+    if (monthsMap[monthKey]) {
+      result.push(monthsMap[monthKey]);
+    } else {
+      result.push({ month: monthKey, total_debit: 0, total_credit: 0, transaction_count: 0 });
+    }
+  }
+
+  return result;
 }
 
 function getStoreInsights(month, rangeMonths = 1) {
