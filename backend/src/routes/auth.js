@@ -21,19 +21,20 @@ router.get('/google', (req, res) => {
 router.get('/google/callback', async (req, res) => {
   const { code, error } = req.query;
 
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
   if (error || !code) {
     console.warn('[Auth] OAuth authorization was cancelled or failed:', error || 'Missing code');
-    return res.redirect('http://localhost:3000/?error=auth_cancelled');
+    return res.redirect(`${frontendUrl}/?error=auth_cancelled`);
   }
 
   try {
     await handleCallback(code);
     console.log('[Auth] Google OAuth succeeded — redirecting to dashboard for client-side sync...');
-    // Redirect immediately, let the frontend trigger sync with a loading overlay
-    res.redirect('http://localhost:3000/?connected=true&autosync=true');
+    res.redirect(`${frontendUrl}/?connected=true&autosync=true`);
   } catch (err) {
     console.error('[Auth] OAuth callback error:', err.message);
-    res.redirect('http://localhost:3000/?error=auth_failed');
+    res.redirect(`${frontendUrl}/?error=auth_failed`);
   }
 });
 
