@@ -18,19 +18,20 @@ try {
 /**
  * Creates an OAuth2 client with stored credentials or fresh ones.
  */
-function createOAuth2Client() {
+function createOAuth2Client(overrideRedirectUri) {
+  const redirectUri = overrideRedirectUri || config.google.redirectUri;
   return new google.auth.OAuth2(
     config.google.clientId,
     config.google.clientSecret,
-    config.google.redirectUri
+    redirectUri
   );
 }
 
 /**
  * Generate the Google OAuth consent URL.
  */
-function getAuthUrl() {
-  const oauth2Client = createOAuth2Client();
+function getAuthUrl(overrideRedirectUri) {
+  const oauth2Client = createOAuth2Client(overrideRedirectUri);
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'select_account consent',
@@ -41,8 +42,8 @@ function getAuthUrl() {
 /**
  * Exchange authorization code for tokens and store refresh token.
  */
-async function handleCallback(code) {
-  const oauth2Client = createOAuth2Client();
+async function handleCallback(code, overrideRedirectUri) {
+  const oauth2Client = createOAuth2Client(overrideRedirectUri);
   const { tokens } = await oauth2Client.getToken(code);
 
   const refreshToken = tokens.refresh_token || tokens.access_token;

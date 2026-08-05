@@ -5,12 +5,22 @@ const mockStore = require('../db/mockStore');
 
 const router = express.Router();
 
+function getRequestRedirectUri(req) {
+  if (process.env.GOOGLE_REDIRECT_URI) {
+    return process.env.GOOGLE_REDIRECT_URI;
+  }
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.get('host');
+  return `${protocol}://${host}/auth/google/callback`;
+}
+
 /**
  * GET /auth/google
  * Redirects user to Google OAuth consent screen.
  */
 router.get('/google', (req, res) => {
-  const url = getAuthUrl();
+  const redirectUri = getRequestRedirectUri(req);
+  const url = getAuthUrl(redirectUri);
   res.redirect(url);
 });
 
@@ -29,7 +39,8 @@ router.get('/google/callback', async (req, res) => {
   }
 
   try {
-    await handleCallback(code);
+    const redirectUri = getRequestRedirectUri(req);
+    await handleCallback(code, redirectUri);
     console.log('[Auth] Google OAuth succeeded — redirecting to dashboard for client-side sync...');
     res.redirect(`${frontendUrl}/?connected=true&autosync=true`);
   } catch (err) {
