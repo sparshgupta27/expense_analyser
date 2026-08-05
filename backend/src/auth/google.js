@@ -30,12 +30,13 @@ function createOAuth2Client(overrideRedirectUri) {
 /**
  * Generate the Google OAuth consent URL.
  */
-function getAuthUrl(overrideRedirectUri) {
+function getAuthUrl(overrideRedirectUri, state) {
   const oauth2Client = createOAuth2Client(overrideRedirectUri);
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'select_account consent',
     scope: config.google.scopes,
+    state: state || '',
   });
 }
 
