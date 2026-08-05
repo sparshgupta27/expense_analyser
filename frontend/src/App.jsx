@@ -73,6 +73,13 @@ export default function App() {
   const dropdownRef = useRef(null);
 
   useEffect(() => {
+    if (window.location.pathname === '/auth/google/callback') {
+      const callbackUrl = new URL(`${API_URL}/auth/google/callback`);
+      callbackUrl.search = window.location.search;
+      window.location.replace(callbackUrl.toString());
+      return;
+    }
+
     const params = new URLSearchParams(window.location.search);
     const justConnected = params.get('connected') === 'true';
     const needsAutoSync = params.get('autosync') === 'true';

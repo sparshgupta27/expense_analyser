@@ -6,8 +6,12 @@ const mockStore = require('../db/mockStore');
 const router = express.Router();
 
 function getRequestRedirectUri(req) {
-  if (process.env.GOOGLE_REDIRECT_URI) {
-    return process.env.GOOGLE_REDIRECT_URI;
+  let envUri = process.env.GOOGLE_REDIRECT_URI;
+  if (envUri && envUri.includes('expense-analyser.onrender.com') && !envUri.includes('-y31v')) {
+    return 'https://expense-analyser-y31v.onrender.com/auth/google/callback';
+  }
+  if (envUri) {
+    return envUri;
   }
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const host = req.get('host');

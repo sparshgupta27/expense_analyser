@@ -21,6 +21,11 @@ services:
         sync: false
       - key: GOOGLE_REDIRECT_URI
         sync: false
+      - key: FRONTEND_URL
+        fromService:
+          type: web
+          name: expense-analyzer-frontend
+          property: url
       - key: ANTHROPIC_API_KEY
         sync: false
 

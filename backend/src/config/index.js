@@ -3,7 +3,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 require('dotenv').config(); // Fallback to local .env
 
 const config = {
-  port: parseInt(process.env.BACKEND_PORT || '3001', 10),
+  port: parseInt(process.env.PORT || process.env.BACKEND_PORT || '3001', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
 
   postgres: {
