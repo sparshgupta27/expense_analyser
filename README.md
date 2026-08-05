@@ -128,6 +128,20 @@ Services started:
 
 ---
 
+### Option C: Cloud Deployment via Render Blueprint
+
+Deploy the entire stack (Backend + Managed Postgres + Static Frontend) with a single click using the included [`render.yaml`](file:///c:/Users/Lenovo/OneDrive/Documents/Desktop/expense_analyser/render.yaml):
+
+1. Push your repository to GitHub / GitLab.
+2. Go to [Render Dashboard](https://dashboard.render.com/) -> **New** -> **Blueprints**.
+3. Connect your repository. Render will automatically detect `render.yaml` and provision:
+   - **Node Web Service**: `expense-analyzer-backend`
+   - **PostgreSQL Database**: `expense-postgres`
+   - **Static Site**: `expense-analyzer-frontend`
+4. Input your secret environment variables when prompted (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, etc.).
+
+---
+
 ## 🧪 Testing
 
 The backend includes a fixture test harness to verify parser accuracy against saved HTML emails:

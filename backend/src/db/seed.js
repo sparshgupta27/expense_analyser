@@ -60,17 +60,22 @@ const SEED_RULES = [
 ];
 
 async function seed() {
-  console.log('[Seed] Inserting category rules...');
+  console.log('[Seed] Inserting category rules in batch...');
 
-  for (const rule of SEED_RULES) {
-    await query(
-      `INSERT INTO category_rules (pattern, category)
-       VALUES ($1, $2)
-       ON CONFLICT DO NOTHING`,
-      [rule.pattern, rule.category]
-    );
-  }
+  const values = [];
+  const valueStrings = [];
+  SEED_RULES.forEach((rule, idx) => {
+    valueStrings.push(`($${idx * 2 + 1}, $${idx * 2 + 2})`);
+    values.push(rule.pattern, rule.category);
+  });
 
+  const sql = `
+    INSERT INTO category_rules (pattern, category)
+    VALUES ${valueStrings.join(', ')}
+    ON CONFLICT DO NOTHING
+  `;
+
+  await query(sql, values);
   console.log(`[Seed] Inserted ${SEED_RULES.length} category rules`);
 }
 

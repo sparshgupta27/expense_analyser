@@ -15,7 +15,14 @@ const { detectAnomalies } = require('./jobs/anomalyDetector');
 const app = express();
 
 // Middleware
-app.use(cors());
+const allowedOrigins = process.env.FRONTEND_URL 
+  ? [process.env.FRONTEND_URL, 'http://localhost:3000', 'http://localhost:5173']
+  : '*';
+
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+}));
 app.use(express.json());
 
 // ============================================================
@@ -48,21 +55,22 @@ app.get('/health', async (req, res) => {
     checks.status = 'degraded';
   }
 
-  // Check Redis
+  // Check Redis (optional in standalone mode)
   try {
     const Redis = require('ioredis');
-    const redis = new Redis({
-      host: config.redis.host,
-      port: config.redis.port,
-      lazyConnect: true,
-      connectTimeout: 2000,
-    });
+    const redis = config.redis.url
+      ? new Redis(config.redis.url)
+      : new Redis({
+          host: config.redis.host,
+          port: config.redis.port,
+          lazyConnect: true,
+          connectTimeout: 1000,
+        });
     await redis.ping();
     checks.services.redis = 'connected';
     await redis.quit();
   } catch (err) {
-    checks.services.redis = `error: ${err.message}`;
-    checks.status = 'degraded';
+    checks.services.redis = 'unavailable (optional)';
   }
 
   const statusCode = checks.status === 'ok' ? 200 : 503;
