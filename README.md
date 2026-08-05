@@ -165,4 +165,72 @@ Tests:       12 passed, 12 total
 ---
 
 ## 📜 License
+---
+
+## 💻 Running the App
+
+### Option A: Local Dev Mode (Quickstart)
+
+#### 1. Backend Setup
+```bash
+cd backend
+npm install
+npm run dev
+```
+*Backend runs on `http://localhost:3001`*
+
+#### 2. Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev
+```
+*Frontend runs on `http://localhost:3000`*
+
+#### 3. Run Parser Tests
+```bash
+cd backend
+npm test
+```
+
+---
+
+### Option B: Full Docker Stack (Postgres + Redis + Kafka)
+
+```bash
+docker-compose up --build
+```
+
+Services started:
+- **PostgreSQL:** `localhost:5432`
+- **Redis:** `localhost:6379`
+- **Kafka:** `localhost:9092`
+- **Backend API:** `localhost:3001`
+- **Frontend App:** `localhost:3000`
+
+---
+
+## 🧪 Testing
+
+The backend includes a fixture test harness to verify parser accuracy against saved HTML emails:
+
+```bash
+cd backend
+npm test
+```
+
+Test output:
+```text
+PASS test/parsers/hdfc.test.js
+PASS test/parsers/phonepe.test.js
+PASS test/parsers/normalizer.test.js
+PASS test/parsers/gpay.test.js
+
+Test Suites: 4 passed, 4 total
+Tests:       12 passed, 12 total
+```
+
+---
+
+## 📜 License
 MIT License
