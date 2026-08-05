@@ -307,7 +307,7 @@ export default function App() {
                     </button>
                   ) : (
                     <a
-                      href={`${API_URL}/auth/google`}
+                      href={`${API_URL}/auth/google?origin=${encodeURIComponent(window.location.origin)}`}
                       className="flex items-center gap-2 px-3 py-1.5 bg-[#2D5C4E] hover:bg-[#254B40] text-white rounded-md text-xs font-semibold transition shadow-xs"
                     >
                       <Wallet className="w-3.5 h-3.5" />
@@ -328,7 +328,7 @@ export default function App() {
                       </button>
 
                       <a
-                        href={`${API_URL}/auth/google`}
+                        href={`${API_URL}/auth/google?origin=${encodeURIComponent(window.location.origin)}`}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-[#1C1B19] hover:bg-[#F5F2EA] rounded transition"
                       >
                         <Wallet className="w-3.5 h-3.5 text-[#8C6D23]" />

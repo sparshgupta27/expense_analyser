@@ -20,9 +20,12 @@ function getRequestRedirectUri(req) {
  */
 router.get('/google', (req, res) => {
   const redirectUri = getRequestRedirectUri(req);
+  const originParam = req.query.origin;
   const referer = req.headers.referer || req.headers.origin || '';
   let frontendOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
-  if (referer) {
+  if (originParam && (originParam.startsWith('http://') || originParam.startsWith('https://'))) {
+    frontendOrigin = originParam;
+  } else if (referer) {
     try {
       const u = new URL(referer);
       frontendOrigin = u.origin;
