@@ -30,6 +30,7 @@ function createOAuth2Client(overrideRedirectUri) {
 }
 
 let inMemoryAccessToken = null;
+let inMemoryTokenExpiry = null;
 
 /**
  * Generate the Google OAuth consent URL.
@@ -57,29 +58,45 @@ async function handleCallback(code, overrideRedirectUri) {
   if (tokens.access_token) {
     inMemoryAccessToken = tokens.access_token;
   }
+  if (tokens.expiry_date) {
+    inMemoryTokenExpiry = tokens.expiry_date;
+  }
   if (tokens.refresh_token) {
     inMemoryRefreshToken = tokens.refresh_token;
   }
 
-  const tokenToSave = tokens.refresh_token || inMemoryRefreshToken || tokens.access_token;
-
-  if (tokenToSave) {
+  if (tokens.refresh_token || tokens.access_token || inMemoryRefreshToken) {
     try {
       fs.writeFileSync(TOKEN_FILE, JSON.stringify({
         google_refresh: inMemoryRefreshToken || tokens.refresh_token || null,
         google_access: tokens.access_token || null,
+        google_expiry: tokens.expiry_date || null,
         updated_at: new Date()
       }), 'utf8');
     } catch (e) {}
 
     try {
-      await query(
-        `INSERT INTO auth_tokens (token_type, token_value, updated_at)
-         VALUES ('google_refresh', $1, NOW())
-         ON CONFLICT (token_type)
-         DO UPDATE SET token_value = $1, updated_at = NOW()`,
-        [tokenToSave]
-      );
+      if (tokens.refresh_token || inMemoryRefreshToken) {
+        await query(
+          `INSERT INTO auth_tokens (token_type, token_value, updated_at)
+           VALUES ('google_refresh', $1, NOW())
+           ON CONFLICT (token_type)
+           DO UPDATE SET token_value = $1, updated_at = NOW()`,
+          [tokens.refresh_token || inMemoryRefreshToken]
+        );
+      }
+      if (tokens.access_token) {
+        await query(
+          `INSERT INTO auth_tokens (token_type, token_value, updated_at)
+           VALUES ('google_access', $1, NOW())
+           ON CONFLICT (token_type)
+           DO UPDATE SET token_value = $1, updated_at = NOW()`,
+          [JSON.stringify({
+            access_token: tokens.access_token,
+            expiry_date: tokens.expiry_date || null,
+          })]
+        );
+      }
       console.log('[Auth] Token stored successfully in Postgres');
     } catch (dbErr) {
       console.warn('[Auth] Postgres unavailable — stored token in local fallback file');
@@ -102,15 +119,27 @@ async function getAuthenticatedClient() {
       const data = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
       if (data.google_refresh) refreshToken = data.google_refresh;
       if (data.google_access) accessToken = data.google_access;
+      if (data.google_expiry) inMemoryTokenExpiry = data.google_expiry;
     } catch (e) {}
   }
 
   try {
     const result = await query(
-      "SELECT token_value FROM auth_tokens WHERE token_type = 'google_refresh'"
+      "SELECT token_type, token_value FROM auth_tokens WHERE token_type IN ('google_refresh', 'google_access')"
     );
-    if (result.rows.length > 0 && result.rows[0].token_value) {
-      refreshToken = result.rows[0].token_value;
+    for (const row of result.rows) {
+      if (row.token_type === 'google_refresh' && row.token_value) {
+        refreshToken = row.token_value;
+      }
+      if (row.token_type === 'google_access' && row.token_value) {
+        try {
+          const parsed = JSON.parse(row.token_value);
+          accessToken = parsed.access_token || accessToken;
+          inMemoryTokenExpiry = parsed.expiry_date || inMemoryTokenExpiry;
+        } catch (e) {
+          accessToken = row.token_value;
+        }
+      }
     }
   } catch (e) {}
 
@@ -123,7 +152,17 @@ async function getAuthenticatedClient() {
   const credentials = {};
   if (accessToken) credentials.access_token = accessToken;
   if (refreshToken) credentials.refresh_token = refreshToken;
+  if (inMemoryTokenExpiry) credentials.expiry_date = inMemoryTokenExpiry;
   oauth2Client.setCredentials(credentials);
+
+  if (refreshToken) {
+    try {
+      await oauth2Client.getAccessToken();
+    } catch (err) {
+      console.warn('[Auth] Stored Google refresh token is invalid:', err.message);
+      return null;
+    }
+  }
 
   return oauth2Client;
 }
@@ -133,13 +172,13 @@ async function getAuthenticatedClient() {
  */
 async function clearAuthToken() {
   inMemoryRefreshToken = null;
+  inMemoryAccessToken = null;
+  inMemoryTokenExpiry = null;
   if (fs.existsSync(TOKEN_FILE)) {
-    try {
-      fs.writeFileSync(TOKEN_FILE, JSON.stringify({ google_refresh: null, updated_at: new Date() }), 'utf8');
-    } catch (e) {}
+    try { fs.unlinkSync(TOKEN_FILE); } catch (e) {}
   }
   try {
-    await query("DELETE FROM auth_tokens WHERE token_type = 'google_refresh'");
+    await query("DELETE FROM auth_tokens WHERE token_type IN ('google_refresh', 'google_access')");
   } catch (e) {}
   console.log('[Auth] OAuth token cleared');
 }

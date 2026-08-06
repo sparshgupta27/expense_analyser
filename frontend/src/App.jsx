@@ -61,6 +61,15 @@ function getLocalYearMonth(d = new Date()) {
   return `${y}-${m}`;
 }
 
+function getSyncErrorMessage(err, fallback) {
+  const data = err?.response?.data;
+  if (data?.details) return data.details;
+  if (data?.error) return data.error;
+  if (err?.code === 'ECONNABORTED') return 'Sync timed out before the server replied.';
+  if (err?.message) return err.message;
+  return fallback;
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard');
   const [selectedMonth, setSelectedMonth] = useState(getLocalYearMonth());
@@ -108,7 +117,7 @@ export default function App() {
           })
           .catch((err) => {
             setSyncOverlay(false);
-            setAuthBanner(err?.response?.data?.error || err?.response?.data?.details || 'Gmail connected, but sync failed.');
+            setAuthBanner(getSyncErrorMessage(err, 'Gmail connected, but sync failed.'));
           });
       } else {
         setAuthBanner('Gmail Account Connected Successfully!');
@@ -182,7 +191,7 @@ export default function App() {
       );
     } catch (err) {
       setSyncOverlay(false);
-      setAuthBanner(err?.response?.data?.error || err?.response?.data?.details || 'Sync failed. Please try reconnecting Gmail.');
+      setAuthBanner(getSyncErrorMessage(err, 'Sync failed. Please try reconnecting Gmail.'));
     } finally {
       setIsSyncing(false);
     }

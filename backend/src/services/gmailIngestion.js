@@ -5,6 +5,14 @@ const { getAuthenticatedClient } = require('../auth/google');
 const { parse } = require('../parsers');
 const mockStore = require('../db/mockStore');
 
+function getErrorDetails(err) {
+  return err?.response?.data?.error_description ||
+    err?.response?.data?.error ||
+    err?.errors?.map((e) => e.message).filter(Boolean).join('; ') ||
+    err?.message ||
+    'Unknown error';
+}
+
 /**
  * Decode base64url-encoded email body content.
  */
@@ -317,8 +325,9 @@ async function syncEmails() {
     };
 
   } catch (err) {
-    console.error('[Ingestion] Error during Gmail API call:', err.message);
-    return { fetched: 0, parsed: 0, status: 'error', error: err.message };
+    const details = getErrorDetails(err);
+    console.error('[Ingestion] Error during Gmail API call:', details);
+    return { fetched: 0, parsed: 0, status: 'error', error: 'Gmail sync failed', details };
   }
 }
 
