@@ -14,13 +14,20 @@ const { detectAnomalies } = require('./jobs/anomalyDetector');
 
 const app = express();
 
-// Middleware
-const allowedOrigins = process.env.FRONTEND_URL 
-  ? [process.env.FRONTEND_URL, 'http://localhost:3000', 'http://localhost:5173']
-  : '*';
-
+// Middleware (Permissive CORS for Vercel & Render)
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (
+      origin.includes('vercel.app') ||
+      origin.includes('onrender.com') ||
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1')
+    ) {
+      return callback(null, true);
+    }
+    callback(null, true);
+  },
   credentials: true,
 }));
 app.use(express.json());
