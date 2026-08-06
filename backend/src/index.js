@@ -85,31 +85,13 @@ app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/transactions', require('./routes/transactions'));
 app.use('/api/subscriptions', require('./routes/subscriptions'));
 
-// Manual sync trigger
-app.post('/api/sync', async (req, res) => {
-  try {
-    const result = await syncEmails();
-    if (result.status === 'unauthenticated') {
-      return res.status(401).json({ error: 'Gmail is not connected', ...result });
-    }
-    if (result.status === 'error') {
-      return res.status(502).json({ error: 'Gmail sync failed', ...result });
-    }
-    res.json({ message: 'Sync complete', ...result });
-  } catch (err) {
-    console.error('[API] Sync error:', err.message);
-    res.status(500).json({ error: 'Sync failed', details: err.message });
-  }
-});
+// Manual sync trigger (Async Non-Blocking for instant response)
+app.post('/api/sync', (req, res) => {
+  syncEmails()
+    .then((result) => console.log('[API] Background sync completed:', result))
+    .catch((err) => console.error('[API] Background sync error:', err.message));
 
-// Manual job triggers (for development/testing)
-app.post('/api/jobs/llm-batch', async (req, res) => {
-  try {
-    const result = await processLlmBatch();
-    res.json({ message: 'LLM batch complete', ...result });
-  } catch (err) {
-    res.status(500).json({ error: 'LLM batch failed', details: err.message });
-  }
+  res.json({ message: 'Gmail sync started in background', status: 'syncing' });
 });
 
 app.post('/api/jobs/aggregate', async (req, res) => {

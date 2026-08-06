@@ -175,25 +175,17 @@ export default function App() {
 
   const handleSyncNow = async () => {
     setIsSyncing(true);
-    setSyncOverlay(true);
     setDropdownOpen(false);
     try {
-      const result = await triggerSync();
-      setSyncOverlay(false);
-      if (result?.latest_month) {
-        setSelectedMonth(result.latest_month);
-      }
-      setRefreshNonce((n) => n + 1);
-      setAuthBanner(
-        result?.parsed > 0
-          ? `Sync completed. Parsed ${result.parsed} transactions.`
-          : `Sync completed, but no transaction emails were parsed from ${result?.fetched || 0} matched emails.`
-      );
+      await triggerSync();
+      setAuthBanner('Gmail sync running! Fetching and parsing your bank & UPI emails...');
+      setTimeout(() => {
+        setRefreshNonce((n) => n + 1);
+        setIsSyncing(false);
+      }, 4000);
     } catch (err) {
-      setSyncOverlay(false);
-      setAuthBanner(getSyncErrorMessage(err, 'Sync failed. Please try reconnecting Gmail.'));
-    } finally {
       setIsSyncing(false);
+      setAuthBanner(getSyncErrorMessage(err, 'Sync failed. Please try reconnecting Gmail.'));
     }
   };
 
