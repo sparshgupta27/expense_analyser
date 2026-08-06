@@ -31,10 +31,9 @@ router.get('/monthly-trend', async (req, res) => {
       ORDER BY month
     `);
 
-    if (rows.length > 0) return res.json(rows.slice(-rangeMonths));
-    res.json(mockStore.getStoreMonthlyTrend(rangeMonths));
+    res.json(rows.slice(-rangeMonths));
   } catch (err) {
-    res.json(mockStore.getStoreMonthlyTrend(rangeMonths));
+    res.json([]);
   }
 });
 
@@ -43,7 +42,6 @@ router.get('/monthly-trend', async (req, res) => {
  */
 router.get('/category-breakdown', async (req, res) => {
   const month = req.query.month || new Date().toISOString().substring(0, 7);
-  const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
 
   try {
     const { rows } = await query(`
@@ -61,8 +59,6 @@ router.get('/category-breakdown', async (req, res) => {
       ORDER BY amount DESC
     `, [month]);
 
-    if (rows.length === 0) return res.json(mockStore.getStoreCategories(month, rangeMonths));
-
     const total = rows.reduce((s, r) => s + parseFloat(r.amount), 0);
     const result = rows.map((r) => ({
       category: r.category,
@@ -73,7 +69,7 @@ router.get('/category-breakdown', async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    res.json(mockStore.getStoreCategories(month, rangeMonths));
+    res.json([]);
   }
 });
 
@@ -83,7 +79,6 @@ router.get('/category-breakdown', async (req, res) => {
 router.get('/top-merchants', async (req, res) => {
   const month = req.query.month || new Date().toISOString().substring(0, 7);
   const limit = parseInt(req.query.limit) || 10;
-  const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
 
   try {
     const { rows } = await query(`
@@ -99,15 +94,13 @@ router.get('/top-merchants', async (req, res) => {
       LIMIT $2
     `, [month, limit]);
 
-    if (rows.length === 0) return res.json(mockStore.getStoreMerchants(month, rangeMonths).slice(0, limit));
-
     res.json(rows.map((r) => ({
       merchant: r.merchant,
       amount: parseFloat(r.amount),
       count: parseInt(r.count),
     })));
   } catch (err) {
-    res.json(mockStore.getStoreMerchants(month, rangeMonths).slice(0, limit));
+    res.json([]);
   }
 });
 
@@ -123,12 +116,11 @@ router.get('/anomalies', async (req, res) => {
  */
 router.get('/insights', async (req, res) => {
   const month = req.query.month || new Date().toISOString().substring(0, 7);
-  const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
   try {
     const insights = await generateInsights(month);
-    res.json(insights.length > 0 ? insights : mockStore.getStoreInsights(month, rangeMonths));
+    res.json(insights);
   } catch (err) {
-    res.json(mockStore.getStoreInsights(month, rangeMonths));
+    res.json([]);
   }
 });
 
@@ -151,29 +143,12 @@ router.get('/summary', async (req, res) => {
     `, [month, rangeMonths]);
 
     const row = rows[0];
-    const transactionCount = parseInt(row?.transaction_count || 0, 10);
-    if (transactionCount > 0) {
-      return res.json({
-        month,
-        rangeMonths,
-        total_spent: parseFloat(row.total_spent || 0),
-        total_income: parseFloat(row.total_income || 0),
-        transaction_count: transactionCount,
-        vs_last_month: 0,
-      });
-    }
-
-    const txs = mockStore.getStoreTransactions(month, rangeMonths);
-
-    const totalSpent = txs.reduce((sum, t) => sum + (t.transaction_type === 'debit' ? t.amount : 0), 0);
-    const totalIncome = txs.reduce((sum, t) => sum + (t.transaction_type === 'credit' ? t.amount : 0), 0);
-
     res.json({
       month,
       rangeMonths,
-      total_spent: totalSpent,
-      total_income: totalIncome,
-      transaction_count: txs.length,
+      total_spent: parseFloat(row?.total_spent || 0),
+      total_income: parseFloat(row?.total_income || 0),
+      transaction_count: parseInt(row?.transaction_count || 0, 10),
       vs_last_month: 0,
     });
   } catch (err) {

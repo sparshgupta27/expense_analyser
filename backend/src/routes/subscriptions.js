@@ -76,15 +76,14 @@ router.get('/', async (req, res) => {
       },
     });
   } catch (err) {
-    const { DEMO_SUBSCRIPTIONS } = require('../db/mockStore');
     res.json({
-      subscriptions: DEMO_SUBSCRIPTIONS,
+      subscriptions: [],
       summary: {
-        total_subscriptions: 3,
-        monthly_total: 3942,
-        upcoming_renewals: 1,
-        ghost_subscriptions: 1,
-        price_changes: 1,
+        total_subscriptions: 0,
+        monthly_total: 0,
+        upcoming_renewals: 0,
+        ghost_subscriptions: 0,
+        price_changes: 0,
       },
     });
   }

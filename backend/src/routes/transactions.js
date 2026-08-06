@@ -110,13 +110,9 @@ router.get('/', async (req, res) => {
       },
     });
   } catch (err) {
-    const mockStore = require('../db/mockStore');
-    const month = req.query.start_date ? req.query.start_date.substring(0, 7) : req.query.month;
-    const rangeMonths = parseInt(req.query.range || req.query.rangeMonths) || 1;
-    let txs = mockStore.getStoreTransactions(month, rangeMonths);
     res.json({
-      data: txs,
-      pagination: { page: 1, limit: 20, total: txs.length, total_pages: 1 },
+      data: [],
+      pagination: { page: 1, limit: 20, total: 0, total_pages: 0 },
     });
   }
 });
