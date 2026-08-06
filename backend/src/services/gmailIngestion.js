@@ -142,11 +142,11 @@ async function syncEmails() {
   const gmail = google.gmail({ version: 'v1', auth });
 
   try {
-    let searchQuery = 'subject:(debited OR credited OR paid OR transaction OR UPI OR VPA OR HDFC OR SBI OR ICICI OR Swiggy OR Zomato OR Amazon OR Google Pay OR PhonePe OR Paytm) OR from:(hdfcbank OR sbicard OR icicibank OR phonepe OR paytm OR swiggy OR zomato)';
+    let searchQuery = 'debited OR credited OR paid OR spent OR transferred OR UPI OR VPA OR HDFC OR SBI OR ICICI OR Axis OR Kotak OR Swiggy OR Zomato OR Amazon OR Flipkart OR Blinkit OR Zepto OR PhonePe OR Paytm OR GPay OR "Google Pay" OR "Bank Alert" OR "Order Confirmation" OR "Payment Received" OR "Payment Sent" OR invoice OR receipt OR statement';
     
     let pageToken = null;
     const allMessages = [];
-    const MAX_PAGES = 3;
+    const MAX_PAGES = 10;
     let pageCount = 0;
 
     do {
@@ -162,28 +162,6 @@ async function syncEmails() {
       pageToken = listResponse.data.nextPageToken;
       pageCount++;
     } while (pageToken && pageCount < MAX_PAGES);
-
-    // Fallback: If strict query yields 0 messages, try a broader transaction keyword search
-    if (allMessages.length === 0) {
-      console.log('[Ingestion] Strict query returned 0 messages — running broader transaction query...');
-      searchQuery = 'debited OR credited OR paid OR INR OR Rs OR order OR invoice OR receipt';
-      pageToken = null;
-      pageCount = 0;
-
-      do {
-        const listResponse = await gmail.users.messages.list({
-          userId: 'me',
-          q: searchQuery,
-          maxResults: 100,
-          pageToken: pageToken || undefined,
-        });
-
-        const msgs = listResponse.data.messages || [];
-        allMessages.push(...msgs);
-        pageToken = listResponse.data.nextPageToken;
-        pageCount++;
-      } while (pageToken && pageCount < MAX_PAGES);
-    }
 
     console.log(`[Ingestion] Total ${allMessages.length} emails found for processing.`);
 

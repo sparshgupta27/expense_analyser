@@ -183,10 +183,14 @@ function getStoreTransactions(month, rangeMonths = 1) {
   const endLimit = new Date(year, mNum, 0, 23, 59, 59); // End of target month
   const startLimit = new Date(year, mNum - parseInt(rangeMonths || 1), 1, 0, 0, 0); // Start N months back
 
-  const filtered = allTxs.filter((t) => {
+  let filtered = allTxs.filter((t) => {
     const d = new Date(t.transaction_date);
     return d >= startLimit && d <= endLimit;
   });
+
+  if (filtered.length === 0 && allTxs.length > 0) {
+    filtered = allTxs;
+  }
 
   return [...filtered].sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
 }
