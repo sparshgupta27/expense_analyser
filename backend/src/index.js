@@ -101,6 +101,21 @@ app.post('/api/sync', (req, res) => {
   res.json({ message: 'Gmail sync started in background', status: 'syncing' });
 });
 
+// Database reset endpoint (Wipes old test entries cleanly)
+app.post('/api/reset', async (req, res) => {
+  try {
+    await query('DELETE FROM transactions');
+    await query('DELETE FROM raw_emails');
+    await query('DELETE FROM subscriptions');
+    mockStore.clearRealTransactions();
+    console.log('[API] Database reset complete. All test transactions cleared.');
+    res.json({ message: 'Database reset successfully. 0 transactions remain.' });
+  } catch (err) {
+    console.error('[API] Reset error:', err.message);
+    res.status(500).json({ error: 'Reset failed', details: err.message });
+  }
+});
+
 app.post('/api/jobs/aggregate', async (req, res) => {
   try {
     await runAggregation();
