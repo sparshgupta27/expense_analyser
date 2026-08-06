@@ -29,6 +29,8 @@ function createOAuth2Client(overrideRedirectUri) {
   );
 }
 
+let inMemoryAccessToken = null;
+
 /**
  * Generate the Google OAuth consent URL.
  */
@@ -36,7 +38,7 @@ function getAuthUrl(overrideRedirectUri, state) {
   const oauth2Client = createOAuth2Client(overrideRedirectUri);
   const opts = {
     access_type: 'offline',
-    prompt: 'select_account consent',
+    prompt: 'consent',
     scope: config.google.scopes,
   };
   if (state && typeof state === 'string' && state.trim()) {
@@ -52,12 +54,22 @@ async function handleCallback(code, overrideRedirectUri) {
   const oauth2Client = createOAuth2Client(overrideRedirectUri);
   const { tokens } = await oauth2Client.getToken(code);
 
-  const refreshToken = tokens.refresh_token || tokens.access_token;
+  if (tokens.access_token) {
+    inMemoryAccessToken = tokens.access_token;
+  }
+  if (tokens.refresh_token) {
+    inMemoryRefreshToken = tokens.refresh_token;
+  }
 
-  if (refreshToken) {
-    inMemoryRefreshToken = refreshToken;
+  const tokenToSave = tokens.refresh_token || inMemoryRefreshToken || tokens.access_token;
+
+  if (tokenToSave) {
     try {
-      fs.writeFileSync(TOKEN_FILE, JSON.stringify({ google_refresh: refreshToken, updated_at: new Date() }), 'utf8');
+      fs.writeFileSync(TOKEN_FILE, JSON.stringify({
+        google_refresh: inMemoryRefreshToken || tokens.refresh_token || null,
+        google_access: tokens.access_token || null,
+        updated_at: new Date()
+      }), 'utf8');
     } catch (e) {}
 
     try {
@@ -66,9 +78,9 @@ async function handleCallback(code, overrideRedirectUri) {
          VALUES ('google_refresh', $1, NOW())
          ON CONFLICT (token_type)
          DO UPDATE SET token_value = $1, updated_at = NOW()`,
-        [refreshToken]
+        [tokenToSave]
       );
-      console.log('[Auth] Refresh token stored in Postgres');
+      console.log('[Auth] Token stored successfully in Postgres');
     } catch (dbErr) {
       console.warn('[Auth] Postgres unavailable — stored token in local fallback file');
     }
@@ -82,16 +94,14 @@ async function handleCallback(code, overrideRedirectUri) {
  * Returns null if no token is stored.
  */
 async function getAuthenticatedClient() {
-  let tokenValue = inMemoryRefreshToken;
+  let refreshToken = inMemoryRefreshToken;
+  let accessToken = inMemoryAccessToken;
 
-  // Always read latest token from file fallback
   if (fs.existsSync(TOKEN_FILE)) {
     try {
       const data = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
-      if (data.google_refresh) {
-        tokenValue = data.google_refresh;
-        inMemoryRefreshToken = tokenValue;
-      }
+      if (data.google_refresh) refreshToken = data.google_refresh;
+      if (data.google_access) accessToken = data.google_access;
     } catch (e) {}
   }
 
@@ -100,31 +110,20 @@ async function getAuthenticatedClient() {
       "SELECT token_value FROM auth_tokens WHERE token_type = 'google_refresh'"
     );
     if (result.rows.length > 0 && result.rows[0].token_value) {
-      if (!tokenValue) {
-        tokenValue = result.rows[0].token_value;
-      } else if (result.rows[0].token_value !== tokenValue) {
-        // Sync Postgres if file token is newer
-        await query(
-          `INSERT INTO auth_tokens (token_type, token_value, updated_at)
-           VALUES ('google_refresh', $1, NOW())
-           ON CONFLICT (token_type) DO UPDATE SET token_value = $1, updated_at = NOW()`,
-          [tokenValue]
-        );
-      }
+      refreshToken = result.rows[0].token_value;
     }
-  } catch (e) {
-    // Postgres offline, use in-memory / file token fallback
-  }
+  } catch (e) {}
 
-  if (!tokenValue) {
-    console.warn('[Auth] No refresh token found. User must authorize first.');
+  if (!refreshToken && !accessToken) {
+    console.warn('[Auth] No OAuth token found. User must authorize first.');
     return null;
   }
 
   const oauth2Client = createOAuth2Client();
-  oauth2Client.setCredentials({
-    refresh_token: tokenValue,
-  });
+  const credentials = {};
+  if (accessToken) credentials.access_token = accessToken;
+  if (refreshToken) credentials.refresh_token = refreshToken;
+  oauth2Client.setCredentials(credentials);
 
   return oauth2Client;
 }
