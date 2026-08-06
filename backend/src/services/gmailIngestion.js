@@ -202,7 +202,7 @@ async function syncEmails() {
     
     let pageToken = null;
     const allMessages = [];
-    const MAX_PAGES = 10;
+    const MAX_PAGES = 3;
     let pageCount = 0;
 
     do {
@@ -227,8 +227,8 @@ async function syncEmails() {
     let dbSaveErrors = 0;
     let latestTransactionDate = null;
 
-    // Process messages in parallel batches of 10 for speed
-    const BATCH_SIZE = 10;
+    // Process messages in parallel batches of 20 for high speed
+    const BATCH_SIZE = 20;
     for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
       const batch = allMessages.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
