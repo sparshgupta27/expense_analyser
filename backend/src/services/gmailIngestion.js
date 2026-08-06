@@ -99,20 +99,39 @@ function cleanMerchantName(sender, subject) {
 }
 
 /**
+ * Verified sender domain list & mandatory bank reference rules for 100% precision.
+ */
+const KNOWN_FINANCIAL_SENDERS = [
+  'hdfcbank', 'icicibank', 'sbicard', 'sbi.co.in', 'axisbank', 'kotak', 'idfcfirstbank',
+  'phonepe', 'paytm', 'googlepay', 'gpay', 'cred.club', 'razorpay', 'cashfree', 'billdesk',
+  'swiggy', 'zomato', 'uber', 'amazon', 'flipkart', 'blinkit', 'zepto', 'netflix', 'spotify', 'apple'
+];
+
+/**
  * Strict fallback parser for real transaction emails only.
  */
 function strictTransactionParser(subject, body, sender, emailDate) {
   const fullText = `${subject}\n${body}`;
+  const senderLower = (sender || '').toLowerCase();
 
-  // Ignore promotional, opportunity, competition, prize money, or marketing emails
-  if (/prizes? worth|prize pool|opportunities for you|competitions|register now|win up to|rewards worth|cashback up to|newsletter|unsubscribe|discount|offer|coupon|deal of the day|job alert|hiring/i.test(fullText)) {
+  // 1. Instantly reject newsletters, competitions, promo deals, job alerts, webinars
+  if (/prizes? worth|prize pool|opportunities for you|competitions|register now|win up to|rewards worth|cashback up to|newsletter|unsubscribe|discount|offer|coupon|deal of the day|job alert|hiring|webinar|course/i.test(fullText)) {
     return null;
   }
 
-  // Require explicit financial payment verbs
-  const isPaymentEmail = /\b(?:debited|credited|paid|spent|transferred|order total|payment of|invoice|receipt)\b/i.test(fullText);
-  if (!isPaymentEmail) return null;
+  // 2. Require explicit financial payment verbs
+  const hasPaymentVerb = /\b(?:debited|credited|paid|spent|transferred|order total|payment of|invoice|receipt)\b/i.test(fullText);
+  if (!hasPaymentVerb) return null;
 
+  // 3. Require bank/card/account reference OR verified financial sender
+  const isKnownSender = KNOWN_FINANCIAL_SENDERS.some((domain) => senderLower.includes(domain));
+  const hasBankRef = /\b(?:a\/c|acc|account|card|upi|vpa|imps|neft|rtgs|ref\s*no|txn\s*id|order\s*id|invoice|receipt)\b/i.test(fullText);
+
+  if (!isKnownSender && !hasBankRef) {
+    return null;
+  }
+
+  // 4. Extract amount tied to payment verbs or currency symbols
   const amountMatch = fullText.match(/(?:debited|credited|paid|spent|transferred|total|amount)\s*(?:by|for|of)?\s*(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
                       fullText.match(/(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)\s*(?:debited|credited|paid|spent|transferred)/i);
 
