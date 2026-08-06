@@ -22,10 +22,7 @@ services:
       - key: GOOGLE_REDIRECT_URI
         sync: false
       - key: FRONTEND_URL
-        fromService:
-          type: web
-          name: expense-analyzer-frontend
-          property: url
+        value: https://expense-analyser-green.vercel.app
       - key: ANTHROPIC_API_KEY
         sync: false
 
