@@ -140,6 +140,29 @@ router.get('/summary', async (req, res) => {
   const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
 
   try {
+    const { rows } = await query(`
+      SELECT
+        SUM(CASE WHEN transaction_type = 'debit' THEN amount ELSE 0 END) AS total_spent,
+        SUM(CASE WHEN transaction_type = 'credit' THEN amount ELSE 0 END) AS total_income,
+        COUNT(*) AS transaction_count
+      FROM transactions
+      WHERE transaction_date >= TO_DATE($1, 'YYYY-MM') - (($2::int - 1) * INTERVAL '1 month')
+        AND transaction_date < TO_DATE($1, 'YYYY-MM') + INTERVAL '1 month'
+    `, [month, rangeMonths]);
+
+    const row = rows[0];
+    const transactionCount = parseInt(row?.transaction_count || 0, 10);
+    if (transactionCount > 0) {
+      return res.json({
+        month,
+        rangeMonths,
+        total_spent: parseFloat(row.total_spent || 0),
+        total_income: parseFloat(row.total_income || 0),
+        transaction_count: transactionCount,
+        vs_last_month: 0,
+      });
+    }
+
     const txs = mockStore.getStoreTransactions(month, rangeMonths);
 
     const totalSpent = txs.reduce((sum, t) => sum + (t.transaction_type === 'debit' ? t.amount : 0), 0);

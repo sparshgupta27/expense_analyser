@@ -126,6 +126,54 @@ function strictTransactionParser(subject, body, sender, emailDate) {
   };
 }
 
+async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, transaction }) {
+  await query(
+    `INSERT INTO raw_emails (gmail_message_id, sender, subject, body, received_at, processed)
+     VALUES ($1, $2, $3, $4, $5, true)
+     ON CONFLICT (gmail_message_id)
+     DO UPDATE SET
+       sender = EXCLUDED.sender,
+       subject = EXCLUDED.subject,
+       body = EXCLUDED.body,
+       received_at = EXCLUDED.received_at,
+       processed = true`,
+    [msg.id, sender, subject, body, receivedAt]
+  );
+
+  await query(
+    `INSERT INTO transactions (
+       gmail_message_id,
+       amount,
+       merchant_raw,
+       merchant_normalized,
+       category,
+       transaction_type,
+       transaction_date,
+       parse_confidence
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (gmail_message_id)
+     DO UPDATE SET
+       amount = EXCLUDED.amount,
+       merchant_raw = EXCLUDED.merchant_raw,
+       merchant_normalized = EXCLUDED.merchant_normalized,
+       category = EXCLUDED.category,
+       transaction_type = EXCLUDED.transaction_type,
+       transaction_date = EXCLUDED.transaction_date,
+       parse_confidence = EXCLUDED.parse_confidence`,
+    [
+      msg.id,
+      transaction.amount,
+      transaction.merchant_raw,
+      transaction.merchant_normalized,
+      transaction.category || 'Other',
+      transaction.transaction_type,
+      transaction.transaction_date,
+      transaction.confidence || 0.9,
+    ]
+  );
+}
+
 /**
  * Main sync function — queries Gmail messages and parses into active transaction store.
  * Uses parallel batching for speed.
@@ -167,6 +215,9 @@ async function syncEmails() {
 
     mockStore.clearRealTransactions();
     let parsedCount = 0;
+    let savedCount = 0;
+    let dbSaveErrors = 0;
+    let latestTransactionDate = null;
 
     // Process messages in parallel batches of 10 for speed
     const BATCH_SIZE = 10;
@@ -198,7 +249,7 @@ async function syncEmails() {
               ? parsedResult.transaction_date
               : receivedAt;
 
-            return {
+            const transaction = {
               id: `gmail-${msg.id}`,
               gmail_message_id: msg.id,
               amount: parsedResult.amount,
@@ -209,6 +260,23 @@ async function syncEmails() {
               transaction_date: txDate,
               confidence: parsedResult.confidence || 0.9,
             };
+
+            try {
+              await saveParsedTransaction({
+                msg,
+                sender,
+                subject,
+                body,
+                receivedAt,
+                transaction,
+              });
+              transaction.saved = true;
+            } catch (dbErr) {
+              transaction.saved = false;
+              transaction.saveError = dbErr.message;
+            }
+
+            return transaction;
           }
           return null;
         })
@@ -218,14 +286,35 @@ async function syncEmails() {
         if (result.status === 'fulfilled' && result.value) {
           mockStore.addRealParsedTransaction(result.value);
           parsedCount++;
+          if (result.value.saved) {
+            savedCount++;
+          } else {
+            dbSaveErrors++;
+            console.warn('[Ingestion] Parsed message but failed to save to Postgres:', result.value.saveError);
+          }
+          const txDate = new Date(result.value.transaction_date);
+          if (!latestTransactionDate || txDate > latestTransactionDate) {
+            latestTransactionDate = txDate;
+          }
         } else if (result.status === 'rejected') {
           console.error(`[Ingestion] Error processing message:`, result.reason?.message || result.reason);
         }
       }
     }
 
-    console.log(`[Ingestion] Sync complete! Parsed ${parsedCount} clean transactions from Gmail.`);
-    return { fetched: allMessages.length, parsed: parsedCount, status: 'success' };
+    const latestMonth = latestTransactionDate
+      ? `${latestTransactionDate.getFullYear()}-${String(latestTransactionDate.getMonth() + 1).padStart(2, '0')}`
+      : null;
+
+    console.log(`[Ingestion] Sync complete! Parsed ${parsedCount} clean transactions from Gmail. Saved ${savedCount} to Postgres.`);
+    return {
+      fetched: allMessages.length,
+      parsed: parsedCount,
+      saved: savedCount,
+      db_save_errors: dbSaveErrors,
+      latest_month: latestMonth,
+      status: dbSaveErrors > 0 && savedCount === 0 ? 'partial_error' : 'success',
+    };
 
   } catch (err) {
     console.error('[Ingestion] Error during Gmail API call:', err.message);

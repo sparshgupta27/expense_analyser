@@ -70,6 +70,7 @@ export default function App() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncOverlay, setSyncOverlay] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
@@ -93,14 +94,21 @@ export default function App() {
         // Show full-screen syncing overlay and trigger sync
         setSyncOverlay(true);
         triggerSync()
-          .then(() => {
+          .then((result) => {
             setSyncOverlay(false);
-            setAuthBanner('Gmail connected & emails synced successfully!');
-            window.location.reload();
+            if (result?.latest_month) {
+              setSelectedMonth(result.latest_month);
+            }
+            setRefreshNonce((n) => n + 1);
+            setAuthBanner(
+              result?.parsed > 0
+                ? `Gmail connected. Parsed ${result.parsed} transactions.`
+                : `Gmail connected, but no transaction emails were parsed from ${result?.fetched || 0} matched emails.`
+            );
           })
-          .catch(() => {
+          .catch((err) => {
             setSyncOverlay(false);
-            setAuthBanner('Gmail connected. Sync may still be processing.');
+            setAuthBanner(err?.response?.data?.error || err?.response?.data?.details || 'Gmail connected, but sync failed.');
           });
       } else {
         setAuthBanner('Gmail Account Connected Successfully!');
@@ -161,13 +169,20 @@ export default function App() {
     setSyncOverlay(true);
     setDropdownOpen(false);
     try {
-      await triggerSync();
+      const result = await triggerSync();
       setSyncOverlay(false);
-      setAuthBanner('Sync completed! Clean transaction history updated.');
-      window.location.reload();
+      if (result?.latest_month) {
+        setSelectedMonth(result.latest_month);
+      }
+      setRefreshNonce((n) => n + 1);
+      setAuthBanner(
+        result?.parsed > 0
+          ? `Sync completed. Parsed ${result.parsed} transactions.`
+          : `Sync completed, but no transaction emails were parsed from ${result?.fetched || 0} matched emails.`
+      );
     } catch (err) {
       setSyncOverlay(false);
-      setAuthBanner('Sync triggered.');
+      setAuthBanner(err?.response?.data?.error || err?.response?.data?.details || 'Sync failed. Please try reconnecting Gmail.');
     } finally {
       setIsSyncing(false);
     }
@@ -187,7 +202,7 @@ export default function App() {
   const renderPage = () => {
     switch (activePage) {
       case 'dashboard':
-        return <Dashboard month={selectedMonth} range={timeRange} />;
+        return <Dashboard month={selectedMonth} range={timeRange} refreshKey={refreshNonce} />;
       case 'transactions':
         return <Transactions month={selectedMonth} range={timeRange} />;
       case 'subscriptions':

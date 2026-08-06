@@ -36,7 +36,7 @@ const formatMonthLabel = (monthStr) => {
   return `${monthName} '${shortYear}`;
 };
 
-export default function Dashboard({ month, range = 1 }) {
+export default function Dashboard({ month, range = 1, refreshKey = 0 }) {
   const [summary, setSummary] = useState(null);
   const [trend, setTrend] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -70,7 +70,7 @@ export default function Dashboard({ month, range = 1 }) {
       }
     }
     fetchData();
-  }, [month, range]);
+  }, [month, range, refreshKey]);
 
   if (loading) {
     return (

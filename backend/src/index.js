@@ -89,6 +89,12 @@ app.use('/api/subscriptions', require('./routes/subscriptions'));
 app.post('/api/sync', async (req, res) => {
   try {
     const result = await syncEmails();
+    if (result.status === 'unauthenticated') {
+      return res.status(401).json({ error: 'Gmail is not connected', ...result });
+    }
+    if (result.status === 'error') {
+      return res.status(502).json({ error: 'Gmail sync failed', ...result });
+    }
     res.json({ message: 'Sync complete', ...result });
   } catch (err) {
     console.error('[API] Sync error:', err.message);
