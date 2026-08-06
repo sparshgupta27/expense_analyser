@@ -19,10 +19,12 @@ try {
  * Creates an OAuth2 client with stored credentials or fresh ones.
  */
 function createOAuth2Client(overrideRedirectUri) {
-  const redirectUri = overrideRedirectUri || config.google.redirectUri;
+  const clientId = (config.google.clientId || '').trim();
+  const clientSecret = (config.google.clientSecret || '').trim();
+  const redirectUri = (overrideRedirectUri || config.google.redirectUri || '').trim();
   return new google.auth.OAuth2(
-    config.google.clientId,
-    config.google.clientSecret,
+    clientId,
+    clientSecret,
     redirectUri
   );
 }
@@ -32,12 +34,15 @@ function createOAuth2Client(overrideRedirectUri) {
  */
 function getAuthUrl(overrideRedirectUri, state) {
   const oauth2Client = createOAuth2Client(overrideRedirectUri);
-  return oauth2Client.generateAuthUrl({
+  const opts = {
     access_type: 'offline',
     prompt: 'select_account consent',
     scope: config.google.scopes,
-    state: state || '',
-  });
+  };
+  if (state && typeof state === 'string' && state.trim()) {
+    opts.state = state.trim();
+  }
+  return oauth2Client.generateAuthUrl(opts);
 }
 
 /**
