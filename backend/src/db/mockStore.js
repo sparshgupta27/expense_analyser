@@ -7,56 +7,7 @@
 let realTransactions = [];
 let isRealDataActive = false;
 
-const DEMO_TRANSACTIONS = [
-  {
-    id: 'tx-1',
-    gmail_message_id: 'msg-101',
-    amount: 2450.00,
-    merchant_raw: 'Swiggy Food Order',
-    merchant_normalized: 'Swiggy',
-    category: 'Food',
-    transaction_type: 'debit',
-    transaction_date: new Date('2026-07-31T19:30:00Z'),
-    parse_confidence: 1.0,
-    has_override: false,
-  },
-  {
-    id: 'tx-2',
-    gmail_message_id: 'msg-102',
-    amount: 15200.00,
-    merchant_raw: 'Amazon India',
-    merchant_normalized: 'Amazon',
-    category: 'Shopping',
-    transaction_type: 'debit',
-    transaction_date: new Date('2026-07-28T14:15:00Z'),
-    parse_confidence: 1.0,
-    has_override: false,
-  },
-  {
-    id: 'tx-3',
-    gmail_message_id: 'msg-103',
-    amount: 649.00,
-    merchant_raw: 'Netflix India',
-    merchant_normalized: 'Netflix',
-    category: 'Entertainment',
-    transaction_type: 'debit',
-    transaction_date: new Date('2026-07-25T08:00:00Z'),
-    parse_confidence: 1.0,
-    has_override: false,
-  },
-  {
-    id: 'tx-4',
-    gmail_message_id: 'msg-104',
-    amount: 1200.00,
-    merchant_raw: 'Uber India',
-    merchant_normalized: 'Uber',
-    category: 'Transport',
-    transaction_type: 'debit',
-    transaction_date: new Date('2026-07-20T11:45:00Z'),
-    parse_confidence: 1.0,
-    has_override: false,
-  },
-];
+const DEMO_TRANSACTIONS = [];
 
 const CATEGORY_MAP = {
   // Food & Dining Senders

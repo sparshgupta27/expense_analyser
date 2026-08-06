@@ -5,9 +5,9 @@ describe('MockStore In-Memory Data Management', () => {
     mockStore.clearRealTransactions();
   });
 
-  test('returns demo transactions when no real transactions exist', () => {
+  test('returns 0 transactions when no real transactions exist', () => {
     const txs = mockStore.getStoreTransactions();
-    expect(txs.length).toBeGreaterThan(0);
+    expect(txs.length).toBe(0);
     expect(mockStore.isUsingRealData()).toBe(false);
   });
 
