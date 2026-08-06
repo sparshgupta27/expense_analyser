@@ -104,17 +104,17 @@ function cleanMerchantName(sender, subject) {
 function strictTransactionParser(subject, body, sender, emailDate) {
   const fullText = `${subject}\n${body}`;
 
-  if (/unsubscribe|newsletter|discount|offer|coupon|deal of the day/i.test(subject) && !/debited|credited|paid|invoice|receipt/i.test(subject)) {
+  // Ignore promotional, opportunity, competition, prize money, or marketing emails
+  if (/prizes? worth|prize pool|opportunities for you|competitions|register now|win up to|rewards worth|cashback up to|newsletter|unsubscribe|discount|offer|coupon|deal of the day|job alert|hiring/i.test(fullText)) {
     return null;
   }
 
-  const isPaymentEmail = /debited|credited|paid|spent|transferred|order total|payment of|vpa|upi|a\/c|card|invoice|receipt|successful/i.test(fullText);
+  // Require explicit financial payment verbs
+  const isPaymentEmail = /\b(?:debited|credited|paid|spent|transferred|order total|payment of|invoice|receipt)\b/i.test(fullText);
   if (!isPaymentEmail) return null;
 
-  const amountMatch = fullText.match(/(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
-                      fullText.match(/debited\s*(?:by|for)?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+(?:\.\d{1,2})?)/i) ||
-                      fullText.match(/paid\s*(?:Rs\.?|INR|₹)?\s*([\d,]+(?:\.\d{1,2})?)/i) ||
-                      fullText.match(/order\s*total\s*(?:Rs\.?|INR|₹)?\s*([\d,]+(?:\.\d{1,2})?)/i);
+  const amountMatch = fullText.match(/(?:debited|credited|paid|spent|transferred|total|amount)\s*(?:by|for|of)?\s*(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+                      fullText.match(/(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)\s*(?:debited|credited|paid|spent|transferred)/i);
 
   if (!amountMatch) return null;
 
@@ -122,7 +122,7 @@ function strictTransactionParser(subject, body, sender, emailDate) {
   if (isNaN(amount) || amount <= 0 || amount > 1000000) return null;
 
   const merchant = cleanMerchantName(sender, subject);
-  const isCredit = /credited|refund|cashback/i.test(fullText) && !/debited/i.test(fullText);
+  const isCredit = /\b(?:credited to|received in your|refund of|refund processed|cashback credited)\b/i.test(fullText) && !/\bdebited\b/i.test(fullText);
 
   return {
     amount,
