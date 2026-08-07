@@ -4,7 +4,7 @@
 
 const express = require('express');
 const { query } = require('../db/pool');
-const { getCurrentUserEmail } = require('../auth/google');
+const { getCurrentUserEmail, getRequestUserEmail } = require('../auth/google');
 
 const router = express.Router();
 
@@ -13,8 +13,8 @@ const router = express.Router();
  * List all detected subscriptions with flags scoped by user_email.
  */
 router.get('/', async (req, res) => {
-  const userEmail = getCurrentUserEmail();
-  if (!userEmail) {
+  const userEmail = getRequestUserEmail(req);
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
     return res.json({
       subscriptions: [],
       summary: {

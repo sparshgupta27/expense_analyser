@@ -94,6 +94,12 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const justConnected = params.get('connected') === 'true';
     const needsAutoSync = params.get('autosync') === 'true';
+    const emailFromUrl = params.get('email');
+
+    if (emailFromUrl && emailFromUrl !== 'default_user@gmail.com') {
+      localStorage.setItem('spendlens_user_email', emailFromUrl);
+      setUserEmail(emailFromUrl);
+    }
 
     if (justConnected) {
       localStorage.setItem('gmail_connected', 'true');
@@ -110,6 +116,7 @@ export default function App() {
             }
             if (result?.user_email) {
               setUserEmail(result.user_email);
+              localStorage.setItem('spendlens_user_email', result.user_email);
             }
             setRefreshNonce((n) => n + 1);
             setAuthBanner(
@@ -128,8 +135,6 @@ export default function App() {
     } else if (params.get('error')) {
       setAuthBanner('Authorization was cancelled or failed.');
       window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (localStorage.getItem('gmail_connected') === 'true') {
-      setIsConnected(true);
     }
 
     getAuthStatus()
@@ -138,16 +143,19 @@ export default function App() {
           setIsConnected(true);
           setUserEmail(res.user_email);
           localStorage.setItem('gmail_connected', 'true');
+          localStorage.setItem('spendlens_user_email', res.user_email);
         } else {
           setIsConnected(false);
           setUserEmail(null);
           localStorage.removeItem('gmail_connected');
+          localStorage.removeItem('spendlens_user_email');
         }
       })
       .catch(() => {
         setIsConnected(false);
         setUserEmail(null);
         localStorage.removeItem('gmail_connected');
+        localStorage.removeItem('spendlens_user_email');
       });
   }, []);
 
@@ -203,6 +211,7 @@ export default function App() {
       await disconnectAuth();
     } catch (e) {}
     localStorage.removeItem('gmail_connected');
+    localStorage.removeItem('spendlens_user_email');
     setIsConnected(false);
     setUserEmail(null);
     setDropdownOpen(false);

@@ -1,5 +1,5 @@
 const express = require('express');
-const { getAuthUrl, handleCallback, getAuthenticatedClient, getCurrentUserEmail, clearAuthToken } = require('../auth/google');
+const { getAuthUrl, handleCallback, getAuthenticatedClient, getCurrentUserEmail, getRequestUserEmail, clearAuthToken } = require('../auth/google');
 const mockStore = require('../db/mockStore');
 
 const router = express.Router();
@@ -61,7 +61,7 @@ router.get('/google/callback', async (req, res) => {
     const redirectUri = getRequestRedirectUri(req);
     const { userEmail } = await handleCallback(code, redirectUri);
     console.log(`[Auth] Google OAuth succeeded for ${userEmail} — redirecting to ${frontendUrl}...`);
-    res.redirect(`${frontendUrl}/?connected=true&autosync=true`);
+    res.redirect(`${frontendUrl}/?connected=true&autosync=true&email=${encodeURIComponent(userEmail)}`);
   } catch (err) {
     console.error('[Auth] OAuth callback error:', err.message);
     res.redirect(`${frontendUrl}/?error=auth_failed`);
@@ -74,7 +74,7 @@ router.get('/google/callback', async (req, res) => {
  */
 router.get('/status', async (req, res) => {
   try {
-    const email = getCurrentUserEmail();
+    const email = getRequestUserEmail(req);
     if (!email || email === 'default_user@gmail.com') {
       return res.json({
         authenticated: false,

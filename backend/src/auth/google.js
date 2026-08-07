@@ -41,18 +41,39 @@ let inMemoryTokenExpiry = null;
 
 /**
  * Generate the Google OAuth consent URL.
+ * Prompts user to select account so switching Gmail on the same laptop works cleanly.
  */
 function getAuthUrl(overrideRedirectUri, state) {
   const oauth2Client = createOAuth2Client(overrideRedirectUri);
   const opts = {
     access_type: 'offline',
-    prompt: 'consent',
+    prompt: 'select_account consent',
     scope: config.google.scopes,
   };
   if (state && typeof state === 'string' && state.trim()) {
     opts.state = state.trim();
   }
   return oauth2Client.generateAuthUrl(opts);
+}
+
+/**
+ * Extract active target user email from HTTP request headers or current active email.
+ * Rejects default_user@gmail.com.
+ */
+function getRequestUserEmail(req) {
+  const headerEmail = req?.headers ? req.headers['x-user-email'] : null;
+  if (headerEmail && typeof headerEmail === 'string' && headerEmail.trim()) {
+    const clean = headerEmail.toLowerCase().trim();
+    if (clean !== 'default_user@gmail.com') return clean;
+  }
+  const queryEmail = req?.query ? req.query.user_email : null;
+  if (queryEmail && typeof queryEmail === 'string' && queryEmail.trim()) {
+    const clean = queryEmail.toLowerCase().trim();
+    if (clean !== 'default_user@gmail.com') return clean;
+  }
+  const active = getCurrentUserEmail();
+  if (active && active !== 'default_user@gmail.com') return active;
+  return null;
 }
 
 /**
@@ -246,5 +267,6 @@ module.exports = {
   handleCallback,
   getAuthenticatedClient,
   getCurrentUserEmail,
+  getRequestUserEmail,
   clearAuthToken,
 };

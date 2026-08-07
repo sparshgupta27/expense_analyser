@@ -5,7 +5,7 @@
 const express = require('express');
 const { query } = require('../db/pool');
 const { setOverride } = require('../services/categorizer');
-const { getCurrentUserEmail } = require('../auth/google');
+const { getCurrentUserEmail, getRequestUserEmail } = require('../auth/google');
 
 const router = express.Router();
 
@@ -19,7 +19,7 @@ const VALID_CATEGORIES = [
  * Paginated, filterable transaction list scoped by user_email.
  */
 router.get('/', async (req, res) => {
-  const userEmail = getCurrentUserEmail();
+  const userEmail = getRequestUserEmail(req);
   if (!userEmail || userEmail === 'default_user@gmail.com') {
     return res.json({
       data: [],

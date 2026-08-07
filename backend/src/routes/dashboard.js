@@ -2,7 +2,7 @@ const express = require('express');
 const config = require('../config');
 const { query } = require('../db/pool');
 const { generateInsights } = require('../services/insightGenerator');
-const { getCurrentUserEmail } = require('../auth/google');
+const { getCurrentUserEmail, getRequestUserEmail } = require('../auth/google');
 const mockStore = require('../db/mockStore');
 
 const router = express.Router();
@@ -11,10 +11,10 @@ const router = express.Router();
  * GET /api/dashboard/monthly-trend?range=12
  */
 router.get('/monthly-trend', async (req, res) => {
-  const userEmail = getCurrentUserEmail();
+  const userEmail = getRequestUserEmail(req);
   const rangeMonths = parseInt(req.query.range || req.query.months) || 12;
 
-  if (!userEmail) {
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
     return res.json([]);
   }
 
@@ -42,11 +42,11 @@ router.get('/monthly-trend', async (req, res) => {
  * GET /api/dashboard/category-breakdown?month=YYYY-MM&range=1
  */
 router.get('/category-breakdown', async (req, res) => {
-  const userEmail = getCurrentUserEmail();
+  const userEmail = getRequestUserEmail(req);
   const month = req.query.month || new Date().toISOString().substring(0, 7);
   const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
 
-  if (!userEmail) {
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
     return res.json([]);
   }
 
@@ -85,12 +85,12 @@ router.get('/category-breakdown', async (req, res) => {
  * GET /api/dashboard/top-merchants?month=YYYY-MM&limit=10&range=1
  */
 router.get('/top-merchants', async (req, res) => {
-  const userEmail = getCurrentUserEmail();
+  const userEmail = getRequestUserEmail(req);
   const month = req.query.month || new Date().toISOString().substring(0, 7);
   const limit = parseInt(req.query.limit) || 10;
   const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
 
-  if (!userEmail) {
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
     return res.json([]);
   }
 
@@ -130,11 +130,11 @@ router.get('/anomalies', async (req, res) => {
  * GET /api/dashboard/insights?month=YYYY-MM&range=1
  */
 router.get('/insights', async (req, res) => {
-  const userEmail = getCurrentUserEmail();
+  const userEmail = getRequestUserEmail(req);
   const month = req.query.month || new Date().toISOString().substring(0, 7);
   const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
 
-  if (!userEmail) {
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
     return res.json([]);
   }
 
@@ -150,11 +150,11 @@ router.get('/insights', async (req, res) => {
  * GET /api/dashboard/summary?month=YYYY-MM&range=1
  */
 router.get('/summary', async (req, res) => {
-  const userEmail = getCurrentUserEmail();
+  const userEmail = getRequestUserEmail(req);
   const month = req.query.month || new Date().toISOString().substring(0, 7);
   const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
 
-  if (!userEmail) {
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
     return res.json({
       month,
       rangeMonths,
