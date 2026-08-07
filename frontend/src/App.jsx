@@ -71,6 +71,7 @@ function getSyncErrorMessage(err, fallback) {
 }
 
 export default function App() {
+  const [userEmail, setUserEmail] = useState(null);
   const [activePage, setActivePage] = useState('dashboard');
   const [selectedMonth, setSelectedMonth] = useState(getLocalYearMonth());
   const [timeRange, setTimeRange] = useState(1);
@@ -108,11 +109,14 @@ export default function App() {
             if (result?.latest_month) {
               setSelectedMonth(result.latest_month);
             }
+            if (result?.user_email) {
+              setUserEmail(result.user_email);
+            }
             setRefreshNonce((n) => n + 1);
             setAuthBanner(
               result?.parsed > 0
-                ? `Gmail connected. Parsed ${result.parsed} transactions.`
-                : `Gmail connected, but no transaction emails were parsed from ${result?.fetched || 0} matched emails.`
+                ? `Gmail connected (${result?.user_email || 'Active Account'}). Parsed ${result.parsed} transactions.`
+                : `Gmail connected (${result?.user_email || 'Active Account'}), but no transaction emails were parsed from ${result?.fetched || 0} matched emails.`
             );
           })
           .catch((err) => {
@@ -133,9 +137,11 @@ export default function App() {
       .then((res) => {
         if (res?.authenticated) {
           setIsConnected(true);
+          setUserEmail(res.user_email || null);
           localStorage.setItem('gmail_connected', 'true');
         } else {
           setIsConnected(false);
+          setUserEmail(null);
           localStorage.removeItem('gmail_connected');
         }
       })
@@ -325,7 +331,7 @@ export default function App() {
                       className="flex items-center gap-2 px-3 py-1.5 bg-[#EBF3F0] border border-[#D2E4DC] hover:bg-[#E2EFEA] text-[#2D5C4E] rounded-md text-xs font-semibold transition"
                     >
                       <CheckCircle className="w-3.5 h-3.5 text-[#2D5C4E]" />
-                      <span>Gmail Sync Active</span>
+                      <span>{userEmail ? userEmail : 'Gmail Sync Active'}</span>
                       <ChevronDown className="w-3.5 h-3.5 opacity-70 ml-1" />
                     </button>
                   ) : (

@@ -12,18 +12,20 @@ const { query } = require('../db/pool');
  * @param {string} month - YYYY-MM format
  * @returns {Promise<Array<{type: string, icon: string, message: string}>>}
  */
-async function generateInsights(month) {
+async function generateInsights(month, rangeMonths = 1, userEmail) {
   const insights = [];
+  if (!userEmail) return insights;
 
   // 1. Biggest expense this month
   const { rows: biggest } = await query(`
     SELECT merchant_normalized, amount, transaction_date
     FROM transactions
-    WHERE transaction_type = 'debit'
-      AND TO_CHAR(transaction_date, 'YYYY-MM') = $1
+    WHERE user_email = $1
+      AND transaction_type = 'debit'
+      AND TO_CHAR(transaction_date, 'YYYY-MM') = $2
     ORDER BY amount DESC
     LIMIT 1
-  `, [month]);
+  `, [userEmail, month]);
 
   if (biggest.length > 0) {
     const b = biggest[0];
@@ -48,19 +50,19 @@ async function generateInsights(month) {
     FROM (
       SELECT category, SUM(amount) AS total
       FROM transactions
-      WHERE transaction_type = 'debit' AND TO_CHAR(transaction_date, 'YYYY-MM') = $1
+      WHERE user_email = $1 AND transaction_type = 'debit' AND TO_CHAR(transaction_date, 'YYYY-MM') = $2
       GROUP BY category
     ) curr
     LEFT JOIN (
       SELECT category, SUM(amount) AS total
       FROM transactions
-      WHERE transaction_type = 'debit' AND TO_CHAR(transaction_date, 'YYYY-MM') = $2
+      WHERE user_email = $1 AND transaction_type = 'debit' AND TO_CHAR(transaction_date, 'YYYY-MM') = $3
       GROUP BY category
     ) prev ON curr.category = prev.category
     WHERE COALESCE(prev.total, 0) > 0
     ORDER BY ABS(curr.total - COALESCE(prev.total, 0)) DESC
     LIMIT 3
-  `, [month, prevMonth]);
+  `, [userEmail, month, prevMonth]);
 
   for (const row of categoryComparison) {
     const curr = parseFloat(row.current_total);
@@ -92,8 +94,9 @@ async function generateInsights(month) {
     SELECT s.merchant_normalized, s.current_amount, s.previous_amount,
            s.price_change_flag, s.last_charged_date
     FROM subscriptions s
-    WHERE TO_CHAR(s.last_charged_date, 'YYYY-MM') = $1
-  `, [month]);
+    WHERE s.user_email = $1
+      AND TO_CHAR(s.last_charged_date, 'YYYY-MM') = $2
+  `, [userEmail, month]);
 
   for (const renewal of renewals) {
     const dateStr = new Date(renewal.last_charged_date).toLocaleDateString('en-IN', {
@@ -120,8 +123,9 @@ async function generateInsights(month) {
   const { rows: newSubs } = await query(`
     SELECT merchant_normalized, current_amount, interval_days
     FROM subscriptions
-    WHERE TO_CHAR(created_at, 'YYYY-MM') = $1
-  `, [month]);
+    WHERE user_email = $1
+      AND TO_CHAR(created_at, 'YYYY-MM') = $2
+  `, [userEmail, month]);
 
   for (const sub of newSubs) {
     const intervalLabel =
@@ -142,8 +146,9 @@ async function generateInsights(month) {
       SUM(CASE WHEN transaction_type = 'debit' THEN amount ELSE 0 END) AS total_debit,
       COUNT(*) AS txn_count
     FROM transactions
-    WHERE TO_CHAR(transaction_date, 'YYYY-MM') = $1
-  `, [month]);
+    WHERE user_email = $1
+      AND TO_CHAR(transaction_date, 'YYYY-MM') = $2
+  `, [userEmail, month]);
 
   if (totalRow.length > 0 && totalRow[0].total_debit > 0) {
     const total = parseFloat(totalRow[0].total_debit);
@@ -161,8 +166,9 @@ async function generateInsights(month) {
   const { rows: ghosts } = await query(`
     SELECT merchant_normalized, current_amount
     FROM subscriptions
-    WHERE ghost_flag = true
-  `);
+    WHERE user_email = $1
+      AND ghost_flag = true
+  `, [userEmail]);
 
   for (const ghost of ghosts) {
     insights.push({

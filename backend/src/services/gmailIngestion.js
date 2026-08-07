@@ -153,18 +153,19 @@ function strictTransactionParser(subject, body, sender, emailDate) {
   };
 }
 
-async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, transaction }) {
+async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, transaction, userEmail }) {
   await query(
-    `INSERT INTO raw_emails (gmail_message_id, sender, subject, body, received_at, processed)
-     VALUES ($1, $2, $3, $4, $5, true)
+    `INSERT INTO raw_emails (gmail_message_id, sender, subject, body, received_at, processed, user_email)
+     VALUES ($1, $2, $3, $4, $5, true, $6)
      ON CONFLICT (gmail_message_id)
      DO UPDATE SET
        sender = EXCLUDED.sender,
        subject = EXCLUDED.subject,
        body = EXCLUDED.body,
        received_at = EXCLUDED.received_at,
-       processed = true`,
-    [msg.id, sender, subject, body, receivedAt]
+       processed = true,
+       user_email = EXCLUDED.user_email`,
+    [msg.id, sender, subject, body, receivedAt, userEmail]
   );
 
   await query(
@@ -176,9 +177,10 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
        category,
        transaction_type,
        transaction_date,
-       parse_confidence
+       parse_confidence,
+       user_email
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (gmail_message_id)
      DO UPDATE SET
        amount = EXCLUDED.amount,
@@ -187,7 +189,8 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
        category = EXCLUDED.category,
        transaction_type = EXCLUDED.transaction_type,
        transaction_date = EXCLUDED.transaction_date,
-       parse_confidence = EXCLUDED.parse_confidence`,
+       parse_confidence = EXCLUDED.parse_confidence,
+       user_email = EXCLUDED.user_email`,
     [
       msg.id,
       transaction.amount,
@@ -197,6 +200,7 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
       transaction.transaction_type,
       transaction.transaction_date,
       transaction.confidence || 0.9,
+      userEmail,
     ]
   );
 }
@@ -206,9 +210,15 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
  * Uses parallel batching for speed.
  */
 async function syncEmails() {
-  console.log('[Ingestion] Starting strict transaction email sync from Gmail...');
+  const userEmail = getCurrentUserEmail();
+  console.log(`[Ingestion] Starting strict transaction email sync for ${userEmail}...`);
 
-  const auth = await getAuthenticatedClient();
+  if (!userEmail) {
+    console.warn('[Ingestion] Not authenticated with Google OAuth. User must authorize first.');
+    return { fetched: 0, parsed: 0, status: 'unauthenticated' };
+  }
+
+  const auth = await getAuthenticatedClient(userEmail);
   if (!auth) {
     console.warn('[Ingestion] Not authenticated with Google OAuth. User must authorize first.');
     return { fetched: 0, parsed: 0, status: 'unauthenticated' };
@@ -240,7 +250,7 @@ async function syncEmails() {
 
     console.log(`[Ingestion] Total ${allMessages.length} emails found for processing.`);
 
-    mockStore.clearRealTransactions();
+    mockStore.clearRealTransactions(userEmail);
     let parsedCount = 0;
     let savedCount = 0;
     let dbSaveErrors = 0;
@@ -286,6 +296,7 @@ async function syncEmails() {
               transaction_type: parsedResult.transaction_type || 'debit',
               transaction_date: txDate,
               confidence: parsedResult.confidence || 0.9,
+              user_email: userEmail,
             };
 
             try {
@@ -296,6 +307,7 @@ async function syncEmails() {
                 body,
                 receivedAt,
                 transaction,
+                userEmail,
               });
               transaction.saved = true;
             } catch (dbErr) {
@@ -311,7 +323,7 @@ async function syncEmails() {
 
       for (const result of results) {
         if (result.status === 'fulfilled' && result.value) {
-          mockStore.addRealParsedTransaction(result.value);
+          mockStore.addRealParsedTransaction(result.value, userEmail);
           parsedCount++;
           if (result.value.saved) {
             savedCount++;

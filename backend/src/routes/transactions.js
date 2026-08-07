@@ -5,6 +5,7 @@
 const express = require('express');
 const { query } = require('../db/pool');
 const { setOverride } = require('../services/categorizer');
+const { getCurrentUserEmail } = require('../auth/google');
 
 const router = express.Router();
 
@@ -15,19 +16,25 @@ const VALID_CATEGORIES = [
 
 /**
  * GET /api/transactions
- * Paginated, filterable transaction list.
- *
- * Query params: page, limit, category, search, start_date, end_date, type
+ * Paginated, filterable transaction list scoped by user_email.
  */
 router.get('/', async (req, res) => {
+  const userEmail = getCurrentUserEmail();
+  if (!userEmail) {
+    return res.json({
+      data: [],
+      pagination: { page: 1, limit: 20, total: 0, total_pages: 1 },
+    });
+  }
+
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const offset = (page - 1) * limit;
 
-    let whereClause = 'WHERE 1=1';
-    const params = [];
-    let paramIndex = 1;
+    let whereClause = 'WHERE t.user_email = $1';
+    const params = [userEmail];
+    let paramIndex = 2;
 
     // Category filter
     if (req.query.category) {
@@ -88,6 +95,7 @@ router.get('/', async (req, res) => {
         t.transaction_type,
         t.transaction_date,
         t.parse_confidence,
+        t.user_email,
         t.created_at,
         (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id) IS NOT NULL AS has_override
       FROM transactions t
@@ -110,9 +118,13 @@ router.get('/', async (req, res) => {
       },
     });
   } catch (err) {
+    const mockStore = require('../db/mockStore');
+    const month = req.query.start_date ? req.query.start_date.substring(0, 7) : req.query.month;
+    const rangeMonths = parseInt(req.query.range || req.query.rangeMonths) || 1;
+    let txs = mockStore.getStoreTransactions(month, rangeMonths, userEmail);
     res.json({
-      data: [],
-      pagination: { page: 1, limit: 20, total: 0, total_pages: 0 },
+      data: txs,
+      pagination: { page: 1, limit: 20, total: txs.length, total_pages: 1 },
     });
   }
 });

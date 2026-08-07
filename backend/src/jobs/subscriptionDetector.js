@@ -47,11 +47,12 @@ function matchesInterval(intervalDays) {
  * Detect subscriptions from transaction history.
  */
 async function detectSubscriptions() {
-  console.log('[Subscription] Starting detection...');
+  console.log('[Subscription] Starting per-user subscription detection...');
 
-  // Get all merchants with 2+ debit transactions
+  // Get all merchants per user_email with minOccurrences+ debit transactions
   const { rows: merchants } = await query(`
     SELECT
+      user_email,
       merchant_normalized,
       ARRAY_AGG(amount ORDER BY transaction_date) AS amounts,
       ARRAY_AGG(transaction_date ORDER BY transaction_date) AS dates,
@@ -59,15 +60,17 @@ async function detectSubscriptions() {
     FROM transactions
     WHERE transaction_type = 'debit'
       AND merchant_normalized IS NOT NULL
-    GROUP BY merchant_normalized
+      AND user_email IS NOT NULL
+    GROUP BY user_email, merchant_normalized
     HAVING COUNT(*) >= $1
-    ORDER BY merchant_normalized
+    ORDER BY user_email, merchant_normalized
   `, [minOccurrences]);
 
   let detected = 0;
   let ghostCount = 0;
 
   for (const merchant of merchants) {
+    const userEmail = merchant.user_email;
     const amounts = merchant.amounts.map(Number);
     const dates = merchant.dates.map((d) => new Date(d));
 
@@ -122,22 +125,23 @@ async function detectSubscriptions() {
       (consistentAmounts.length / recentAmounts.length) * intervalConsistency
     );
 
-    // Upsert subscription
+    // Upsert subscription per user_email & merchant_normalized
     await query(
       `INSERT INTO subscriptions
-         (merchant_normalized, current_amount, previous_amount, interval_days,
+         (user_email, merchant_normalized, current_amount, previous_amount, interval_days,
           next_expected_date, last_charged_date, price_change_flag, confidence, last_detected_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-       ON CONFLICT (merchant_normalized) DO UPDATE SET
-         current_amount = $2,
-         previous_amount = $3,
-         interval_days = $4,
-         next_expected_date = $5,
-         last_charged_date = $6,
-         price_change_flag = $7,
-         confidence = $8,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+       ON CONFLICT (user_email, merchant_normalized) DO UPDATE SET
+         current_amount = $3,
+         previous_amount = $4,
+         interval_days = $5,
+         next_expected_date = $6,
+         last_charged_date = $7,
+         price_change_flag = $8,
+         confidence = $9,
          last_detected_at = NOW()`,
       [
+        userEmail,
         merchant.merchant_normalized,
         currentAmount,
         previousAmount,
@@ -158,34 +162,32 @@ async function detectSubscriptions() {
 
     detected++;
     console.log(
-      `[Subscription] ${merchant.merchant_normalized}: ₹${currentAmount} every ${matchedInterval}d` +
+      `[Subscription] User ${userEmail} -> ${merchant.merchant_normalized}: ₹${currentAmount} every ${matchedInterval}d` +
       `${priceChanged ? ' (PRICE CHANGED)' : ''}`
     );
   }
 
-  // Ghost detection: subscriptions with no other activity in 90 days
-  const { rows: subs } = await query('SELECT merchant_normalized FROM subscriptions');
+  // Ghost detection per user
+  const { rows: subs } = await query('SELECT id, user_email, merchant_normalized FROM subscriptions WHERE user_email IS NOT NULL');
 
   for (const sub of subs) {
     const { rows: recentActivity } = await query(
       `SELECT COUNT(*) AS count FROM transactions
-       WHERE merchant_normalized = $1
+       WHERE user_email = $1
+         AND merchant_normalized = $2
          AND transaction_date >= NOW() - INTERVAL '${ghostInactiveDays} days'
          AND transaction_type = 'debit'`,
-      [sub.merchant_normalized]
+      [sub.user_email, sub.merchant_normalized]
     );
 
-    // A ghost subscription has recurring charges but no additional interaction
-    // If the only transactions are the recurring ones (1-3 per interval),
-    // and there's no "burst" activity, flag it
     const activityCount = parseInt(recentActivity[0].count);
     const expectedCharges = Math.ceil(ghostInactiveDays / 30); // ~3 for monthly
 
     const isGhost = activityCount <= expectedCharges;
 
     await query(
-      'UPDATE subscriptions SET ghost_flag = $1 WHERE merchant_normalized = $2',
-      [isGhost, sub.merchant_normalized]
+      'UPDATE subscriptions SET ghost_flag = $1 WHERE id = $2',
+      [isGhost, sub.id]
     );
 
     if (isGhost) ghostCount++;

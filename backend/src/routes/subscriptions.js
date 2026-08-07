@@ -4,14 +4,28 @@
 
 const express = require('express');
 const { query } = require('../db/pool');
+const { getCurrentUserEmail } = require('../auth/google');
 
 const router = express.Router();
 
 /**
  * GET /api/subscriptions
- * List all detected subscriptions with flags.
+ * List all detected subscriptions with flags scoped by user_email.
  */
 router.get('/', async (req, res) => {
+  const userEmail = getCurrentUserEmail();
+  if (!userEmail) {
+    return res.json({
+      subscriptions: [],
+      summary: {
+        total_subscriptions: 0,
+        monthly_total: 0,
+        upcoming_renewals: 0,
+        ghost_subscriptions: 0,
+      },
+    });
+  }
+
   try {
     const { rows } = await query(`
       SELECT
@@ -35,8 +49,10 @@ router.get('/', async (req, res) => {
         END AS frequency
       FROM subscriptions s
       LEFT JOIN merchant_profiles mp ON mp.normalized_name = s.merchant_normalized
+      WHERE s.user_email = $1
       ORDER BY s.next_expected_date ASC
-    `);
+    `, [userEmail]);
+
 
     // Split into active, upcoming, ghost
     const now = new Date();

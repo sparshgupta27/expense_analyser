@@ -1,6 +1,5 @@
 const express = require('express');
-const { getAuthUrl, handleCallback, getAuthenticatedClient, clearAuthToken } = require('../auth/google');
-const { syncEmails } = require('../services/gmailIngestion');
+const { getAuthUrl, handleCallback, getAuthenticatedClient, getCurrentUserEmail, clearAuthToken } = require('../auth/google');
 const mockStore = require('../db/mockStore');
 
 const router = express.Router();
@@ -60,8 +59,8 @@ router.get('/google/callback', async (req, res) => {
 
   try {
     const redirectUri = getRequestRedirectUri(req);
-    await handleCallback(code, redirectUri);
-    console.log(`[Auth] Google OAuth succeeded — redirecting to ${frontendUrl} for client-side sync...`);
+    const { userEmail } = await handleCallback(code, redirectUri);
+    console.log(`[Auth] Google OAuth succeeded for ${userEmail} — redirecting to ${frontendUrl}...`);
     res.redirect(`${frontendUrl}/?connected=true&autosync=true`);
   } catch (err) {
     console.error('[Auth] OAuth callback error:', err.message);
@@ -71,19 +70,21 @@ router.get('/google/callback', async (req, res) => {
 
 /**
  * GET /auth/status
- * Check if we have a valid OAuth token.
+ * Check if we have a valid OAuth token and return user email.
  */
 router.get('/status', async (req, res) => {
   try {
-    const client = await getAuthenticatedClient();
+    const email = getCurrentUserEmail();
+    const client = await getAuthenticatedClient(email);
     res.json({
       authenticated: !!client,
+      user_email: client ? email : null,
       message: client
-        ? 'Gmail access is configured'
+        ? `Gmail access is configured for ${email}`
         : 'Not authenticated. Visit /auth/google to authorize.',
     });
   } catch (err) {
-    res.json({ authenticated: false, message: err.message });
+    res.json({ authenticated: false, user_email: null, message: err.message });
   }
 });
 
@@ -93,8 +94,9 @@ router.get('/status', async (req, res) => {
  */
 router.post('/logout', async (req, res) => {
   try {
-    await clearAuthToken();
-    mockStore.clearRealTransactions();
+    const email = getCurrentUserEmail();
+    await clearAuthToken(email);
+    mockStore.clearRealTransactions(email);
     res.json({ message: 'Account disconnected successfully' });
   } catch (err) {
     res.status(500).json({ error: 'Disconnect failed', details: err.message });
