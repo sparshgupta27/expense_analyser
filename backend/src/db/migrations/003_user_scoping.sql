@@ -51,9 +51,10 @@ CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_email
 
 -- Composite Unique Constraint for deduplication per user account
 DROP INDEX IF EXISTS idx_transactions_dedupe;
+DROP INDEX IF EXISTS idx_transactions_user_dedupe;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_user_dedupe
-  ON transactions(user_email, dedupe_hash)
-  WHERE dedupe_hash IS NOT NULL;
+  ON transactions(user_email, dedupe_hash);
+
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_user_merchant
   ON subscriptions(user_email, merchant_normalized);

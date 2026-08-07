@@ -125,6 +125,13 @@ async function detectSubscriptions() {
       (consistentAmounts.length / recentAmounts.length) * intervalConsistency
     );
 
+    await query(
+      `INSERT INTO merchant_profiles (normalized_name, display_name)
+       VALUES ($1, $1)
+       ON CONFLICT (normalized_name) DO NOTHING`,
+      [merchant.merchant_normalized]
+    );
+
     // Upsert subscription per user_email & merchant_normalized
     await query(
       `INSERT INTO subscriptions
@@ -217,4 +224,4 @@ async function runSubscriptionDetection() {
   return detectSubscriptions();
 }
 
-module.exports = { runSubscriptionDetection, amountsMatch, matchesInterval };
+module.exports = { runSubscriptionDetection, detectSubscriptions, amountsMatch, matchesInterval };

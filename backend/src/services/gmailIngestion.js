@@ -1,7 +1,7 @@
 const { google } = require('googleapis');
 const config = require('../config');
 const { query } = require('../db/pool');
-const { getAuthenticatedClient } = require('../auth/google');
+const { getAuthenticatedClient, getCurrentUserEmail } = require('../auth/google');
 const { parse } = require('../parsers');
 const mockStore = require('../db/mockStore');
 
@@ -167,6 +167,17 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
        user_email = EXCLUDED.user_email`,
     [msg.id, sender, subject, body, receivedAt, userEmail]
   );
+
+  if (transaction.merchant_normalized) {
+    try {
+      await query(
+        `INSERT INTO merchant_profiles (normalized_name, display_name, category)
+         VALUES ($1, $1, $2)
+         ON CONFLICT (normalized_name) DO NOTHING`,
+        [transaction.merchant_normalized, transaction.category || 'Other']
+      );
+    } catch (e) {}
+  }
 
   await query(
     `INSERT INTO transactions (
@@ -341,25 +352,24 @@ async function syncEmails() {
       }
     }
 
-    const latestMonth = latestTransactionDate
-      ? `${latestTransactionDate.getFullYear()}-${String(latestTransactionDate.getMonth() + 1).padStart(2, '0')}`
-      : null;
-
     console.log(`[Ingestion] Sync complete! Parsed ${parsedCount} clean transactions from Gmail. Saved ${savedCount} to Postgres.`);
     return {
       fetched: allMessages.length,
       parsed: parsedCount,
       saved: savedCount,
-      db_save_errors: dbSaveErrors,
-      latest_month: latestMonth,
-      status: dbSaveErrors > 0 && savedCount === 0 ? 'partial_error' : 'success',
+      dbSaveErrors,
+      user_email: userEmail,
+      status: 'completed',
     };
-
   } catch (err) {
-    const details = getErrorDetails(err);
-    console.error('[Ingestion] Error during Gmail API call:', details);
-    return { fetched: 0, parsed: 0, status: 'error', error: 'Gmail sync failed', details };
+    console.error('[Ingestion] Error fetching messages:', getErrorDetails(err));
+    return { fetched: 0, parsed: 0, status: 'error', error: getErrorDetails(err) };
   }
 }
 
-module.exports = { syncEmails, cleanMerchantName, strictTransactionParser };
+module.exports = {
+  syncEmails,
+  strictTransactionParser,
+  cleanMerchantName,
+  extractBody,
+};
