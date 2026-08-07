@@ -127,7 +127,13 @@ function addRealParsedTransaction(tx, userEmail = 'default_user@gmail.com') {
 }
 
 function getStoreTransactions(month, rangeMonths = 1, userEmail) {
-  const email = userEmail || require('../auth/google').getCurrentUserEmail() || 'default_user@gmail.com';
+  let email = userEmail || require('../auth/google').getCurrentUserEmail();
+  if (!email && process.env.NODE_ENV === 'test') {
+    email = 'default_user@gmail.com';
+  }
+  if (!email || (email === 'default_user@gmail.com' && process.env.NODE_ENV !== 'test')) {
+    return [];
+  }
   const userTxs = realTransactionsByUser[email] || [];
   if (userTxs.length === 0) {
     return [];
@@ -282,7 +288,11 @@ module.exports = {
   getStoreMonthlyTrend,
   getStoreInsights,
   isUsingRealData: (userEmail) => {
-    const email = userEmail || require('../auth/google').getCurrentUserEmail() || 'default_user@gmail.com';
-    return !!(email && realTransactionsByUser[email] && realTransactionsByUser[email].length > 0);
+    let email = userEmail || require('../auth/google').getCurrentUserEmail();
+    if (!email && process.env.NODE_ENV === 'test') {
+      email = 'default_user@gmail.com';
+    }
+    if (!email || (email === 'default_user@gmail.com' && process.env.NODE_ENV !== 'test')) return false;
+    return !!(realTransactionsByUser[email] && realTransactionsByUser[email].length > 0);
   },
 };

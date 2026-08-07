@@ -101,7 +101,6 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
 
       if (needsAutoSync) {
-        // Show full-screen syncing overlay and trigger sync
         setSyncOverlay(true);
         triggerSync()
           .then((result) => {
@@ -135,9 +134,9 @@ export default function App() {
 
     getAuthStatus()
       .then((res) => {
-        if (res?.authenticated) {
+        if (res?.authenticated && res.user_email && res.user_email !== 'default_user@gmail.com') {
           setIsConnected(true);
-          setUserEmail(res.user_email || null);
+          setUserEmail(res.user_email);
           localStorage.setItem('gmail_connected', 'true');
         } else {
           setIsConnected(false);
@@ -145,7 +144,11 @@ export default function App() {
           localStorage.removeItem('gmail_connected');
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setIsConnected(false);
+        setUserEmail(null);
+        localStorage.removeItem('gmail_connected');
+      });
   }, []);
 
   useEffect(() => {
@@ -201,6 +204,7 @@ export default function App() {
     } catch (e) {}
     localStorage.removeItem('gmail_connected');
     setIsConnected(false);
+    setUserEmail(null);
     setDropdownOpen(false);
     setAuthBanner('Account disconnected.');
     window.location.reload();
@@ -209,13 +213,33 @@ export default function App() {
   const renderPage = () => {
     switch (activePage) {
       case 'dashboard':
-        return <Dashboard month={selectedMonth} range={timeRange} refreshKey={refreshNonce} />;
+        return (
+          <Dashboard
+            month={selectedMonth}
+            range={timeRange}
+            refreshKey={refreshNonce}
+            isConnected={isConnected}
+            userEmail={userEmail}
+            onSync={handleSyncNow}
+            isSyncing={isSyncing}
+          />
+        );
       case 'transactions':
         return <Transactions month={selectedMonth} range={timeRange} />;
       case 'subscriptions':
         return <Subscriptions />;
       default:
-        return <Dashboard month={selectedMonth} range={timeRange} />;
+        return (
+          <Dashboard
+            month={selectedMonth}
+            range={timeRange}
+            refreshKey={refreshNonce}
+            isConnected={isConnected}
+            userEmail={userEmail}
+            onSync={handleSyncNow}
+            isSyncing={isSyncing}
+          />
+        );
     }
   };
 
@@ -325,13 +349,13 @@ export default function App() {
 
                 {/* Gmail Connection Status Button / Dropdown */}
                 <div className="relative" ref={dropdownRef}>
-                  {isConnected ? (
+                  {isConnected && userEmail ? (
                     <button
                       onClick={() => setDropdownOpen(!dropdownOpen)}
                       className="flex items-center gap-2 px-3 py-1.5 bg-[#EBF3F0] border border-[#D2E4DC] hover:bg-[#E2EFEA] text-[#2D5C4E] rounded-md text-xs font-semibold transition"
                     >
                       <CheckCircle className="w-3.5 h-3.5 text-[#2D5C4E]" />
-                      <span>{userEmail ? userEmail : 'Gmail Sync Active'}</span>
+                      <span>{userEmail}</span>
                       <ChevronDown className="w-3.5 h-3.5 opacity-70 ml-1" />
                     </button>
                   ) : (

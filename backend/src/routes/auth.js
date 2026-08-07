@@ -75,6 +75,13 @@ router.get('/google/callback', async (req, res) => {
 router.get('/status', async (req, res) => {
   try {
     const email = getCurrentUserEmail();
+    if (!email || email === 'default_user@gmail.com') {
+      return res.json({
+        authenticated: false,
+        user_email: null,
+        message: 'Not authenticated. Visit /auth/google to authorize.',
+      });
+    }
     const client = await getAuthenticatedClient(email);
     res.json({
       authenticated: !!client,

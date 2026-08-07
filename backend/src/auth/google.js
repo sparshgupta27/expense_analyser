@@ -13,8 +13,12 @@ let currentActiveEmail = null;
 try {
   if (fs.existsSync(TOKEN_FILE)) {
     const data = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
-    inMemoryRefreshToken = data.google_refresh || null;
-    currentActiveEmail = data.user_email || null;
+    if (data.user_email && data.user_email !== 'default_user@gmail.com') {
+      inMemoryRefreshToken = data.google_refresh || null;
+      currentActiveEmail = data.user_email || null;
+    } else {
+      try { fs.unlinkSync(TOKEN_FILE); } catch (e) {}
+    }
   }
 } catch (e) {}
 
@@ -71,7 +75,7 @@ async function handleCallback(code, overrideRedirectUri) {
   oauth2Client.setCredentials(tokens);
 
   // Fetch Google user profile to obtain user's email address
-  let userEmail = 'default_user@gmail.com';
+  let userEmail = null;
   try {
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const { data: userInfo } = await oauth2.userinfo.get();
@@ -80,6 +84,10 @@ async function handleCallback(code, overrideRedirectUri) {
     }
   } catch (err) {
     console.warn('[Auth] Failed to fetch Google userinfo email:', err.message);
+  }
+
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
+    throw new Error('Failed to retrieve valid email address from Google profile.');
   }
 
   currentActiveEmail = userEmail;
@@ -134,6 +142,7 @@ async function handleCallback(code, overrideRedirectUri) {
  * Get current active user email.
  */
 function getCurrentUserEmail() {
+  if (currentActiveEmail === 'default_user@gmail.com') return null;
   return currentActiveEmail;
 }
 
@@ -143,7 +152,7 @@ function getCurrentUserEmail() {
  */
 async function getAuthenticatedClient(targetEmail) {
   const activeEmail = targetEmail || currentActiveEmail;
-  if (!activeEmail) {
+  if (!activeEmail || activeEmail === 'default_user@gmail.com') {
     return null;
   }
 

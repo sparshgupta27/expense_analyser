@@ -20,7 +20,7 @@ const VALID_CATEGORIES = [
  */
 router.get('/', async (req, res) => {
   const userEmail = getCurrentUserEmail();
-  if (!userEmail) {
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
     return res.json({
       data: [],
       pagination: { page: 1, limit: 20, total: 0, total_pages: 1 },
