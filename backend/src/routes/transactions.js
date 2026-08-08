@@ -64,6 +64,12 @@ router.get('/', async (req, res) => {
       params.push(req.query.end_date);
       paramIndex++;
     }
+    if (!req.query.start_date && req.query.month) {
+      const rangeMonths = parseInt(req.query.range || req.query.rangeMonths) || 1;
+      whereClause += ` AND t.transaction_date >= TO_DATE($${paramIndex}, 'YYYY-MM') - (($${paramIndex + 1}::int - 1) * INTERVAL '1 month') AND t.transaction_date < TO_DATE($${paramIndex}, 'YYYY-MM') + INTERVAL '1 month'`;
+      params.push(req.query.month, rangeMonths);
+      paramIndex += 2;
+    }
 
     // Transaction type
     if (req.query.type) {

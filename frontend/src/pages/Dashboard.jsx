@@ -5,14 +5,14 @@ import {
 } from 'recharts';
 import {
   TrendingUp, TrendingDown, DollarSign, CreditCard, Layers,
-  ShoppingBag, Sparkles, Receipt, ArrowUpRight, ArrowDownRight, Wallet, CheckCircle, RotateCw
+  ShoppingBag, Sparkles, Receipt, ArrowUpRight, ArrowDownRight, CheckCircle, RotateCw
 } from 'lucide-react';
 import { Card, CardTitle, Metric, Text } from '../components/ui/Card';
 import { Alert } from '../components/ui/Alert';
 import { Badge } from '../components/ui/Badge';
 import {
   getDashboardSummary, getMonthlyTrend, getCategoryBreakdown,
-  getTopMerchants, getAnomalies, getInsights, API_URL
+  getTopMerchants, getAnomalies, getInsights
 } from '../api/client';
 
 const CATEGORY_COLORS = {
@@ -109,31 +109,8 @@ export default function Dashboard({
 
   return (
     <div className="space-y-6">
-      {/* CONNECT GMAIL / UNCONNECTED OR NEW USER BANNER */}
-      {!isConnected || !userEmail ? (
-        <div className="p-6 sm:p-8 rounded-xl bg-white border border-[#E8E3D8] shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-xl">
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-[#EBF3F0] text-[#2D5C4E] text-xs font-semibold">
-              <Wallet className="w-3.5 h-3.5" />
-              <span>Private & Isolated Account Storage</span>
-            </div>
-            <h3 className="text-lg sm:text-xl font-bold text-[#1C1B19] tracking-tight">
-              Connect your Gmail Account to Start Parsing Expenses
-            </h3>
-            <p className="text-xs text-[#6C6A65] leading-relaxed">
-              SpendLens automatically extracts transactional alerts from HDFC, ICICI, SBI, Swiggy, Zomato, Amazon, Paytm, and PhonePe emails.
-              Your data is strictly isolated to your own Gmail address and never visible to anyone else.
-            </p>
-          </div>
-          <a
-            href={`${API_URL}/auth/google?origin=${encodeURIComponent(window.location.origin)}`}
-            className="flex-shrink-0 px-5 py-2.5 bg-[#2D5C4E] hover:bg-[#254B40] text-white text-xs font-semibold rounded-md shadow-xs transition flex items-center gap-2"
-          >
-            <Wallet className="w-4 h-4" />
-            <span>Connect Gmail Account</span>
-          </a>
-        </div>
-      ) : (summary?.transaction_count === 0 || totalSpent === 0) ? (
+      {/* EMPTY STATE BANNER - shown when connected but no transactions found */}
+      {(summary?.transaction_count === 0 || totalSpent === 0) ? (
         <div className="p-6 sm:p-8 rounded-xl bg-white border border-[#E8E3D8] shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div className="space-y-2 max-w-xl">
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-[#EBF3F0] text-[#2D5C4E] text-xs font-semibold">
@@ -141,10 +118,10 @@ export default function Dashboard({
               <span>Connected: {userEmail}</span>
             </div>
             <h3 className="text-lg sm:text-xl font-bold text-[#1C1B19] tracking-tight">
-              No Expense Receipts Found for {userEmail}
+              No Expense Receipts Found for This Period
             </h3>
             <p className="text-xs text-[#6C6A65] leading-relaxed">
-              Your Gmail account is authorized! Click "Sync Emails Now" below to scan your inbox for bank alerts and UPI payment confirmations for {month}.
+              No transaction emails were parsed for {month}. Try syncing again or select a different month to view your expenses.
             </p>
           </div>
           {onSync && (

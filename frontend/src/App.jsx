@@ -78,6 +78,9 @@ export default function App() {
   const [timeRange, setTimeRange] = useState(1);
   const [authBanner, setAuthBanner] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [hasSynced, setHasSynced] = useState(() => localStorage.getItem('spendlens_has_synced') === 'true');
+  const [syncError, setSyncError] = useState(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncOverlay, setSyncOverlay] = useState(false);
@@ -107,35 +110,36 @@ export default function App() {
       setIsConnected(true);
       window.history.replaceState({}, document.title, window.location.pathname);
 
-      if (needsAutoSync) {
-        setSyncOverlay(true);
-        setIsSyncing(true);
-        triggerSync()
-          .then((result) => {
-            if (result?.latest_month) {
-              setSelectedMonth(result.latest_month);
-            }
-            if (result?.user_email) {
-              setUserEmail(result.user_email);
-              localStorage.setItem('spendlens_user_email', result.user_email);
-            }
-            setRefreshNonce((n) => n + 1);
-            setAuthBanner(
-              result?.parsed > 0
-                ? `Gmail connected (${result?.user_email || 'Active Account'}). Parsed ${result.parsed} transactions.`
-                : `Gmail connected (${result?.user_email || 'Active Account'}), but no transaction emails were parsed from ${result?.fetched || 0} matched emails.`
-            );
-          })
-          .catch((err) => {
-            setAuthBanner(getSyncErrorMessage(err, 'Gmail connected, but sync failed.'));
-          })
-          .finally(() => {
-            setSyncOverlay(false);
-            setIsSyncing(false);
-          });
-      } else {
-        setAuthBanner('Gmail Account Connected Successfully!');
-      }
+      // Always auto-sync on fresh connect
+      setSyncOverlay(true);
+      setIsSyncing(true);
+      setSyncError(null);
+      triggerSync()
+        .then((result) => {
+          if (result?.latest_month) {
+            setSelectedMonth(result.latest_month);
+          }
+          if (result?.user_email) {
+            setUserEmail(result.user_email);
+            localStorage.setItem('spendlens_user_email', result.user_email);
+          }
+          setRefreshNonce((n) => n + 1);
+          setHasSynced(true);
+          localStorage.setItem('spendlens_has_synced', 'true');
+          setAuthBanner(
+            result?.parsed > 0
+              ? `Gmail connected (${result?.user_email || 'Active Account'}). Parsed ${result.parsed} transactions.`
+              : `Gmail connected (${result?.user_email || 'Active Account'}), but no transaction emails were parsed from ${result?.fetched || 0} matched emails.`
+          );
+        })
+        .catch((err) => {
+          setSyncError(getSyncErrorMessage(err, 'Gmail connected, but sync failed. Please retry.'));
+          setAuthBanner(getSyncErrorMessage(err, 'Gmail connected, but sync failed.'));
+        })
+        .finally(() => {
+          setSyncOverlay(false);
+          setIsSyncing(false);
+        });
     } else if (params.get('error')) {
       setAuthBanner('Authorization was cancelled or failed.');
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -151,15 +155,22 @@ export default function App() {
         } else {
           setIsConnected(false);
           setUserEmail(null);
+          setHasSynced(false);
           localStorage.removeItem('gmail_connected');
           localStorage.removeItem('spendlens_user_email');
+          localStorage.removeItem('spendlens_has_synced');
         }
       })
       .catch(() => {
         setIsConnected(false);
         setUserEmail(null);
+        setHasSynced(false);
         localStorage.removeItem('gmail_connected');
         localStorage.removeItem('spendlens_user_email');
+        localStorage.removeItem('spendlens_has_synced');
+      })
+      .finally(() => {
+        setAuthChecked(true);
       });
   }, []);
 
@@ -198,18 +209,22 @@ export default function App() {
     setIsSyncing(true);
     setSyncOverlay(true);
     setDropdownOpen(false);
+    setSyncError(null);
     try {
       const result = await triggerSync();
       if (result?.latest_month) {
         setSelectedMonth(result.latest_month);
       }
       setRefreshNonce((n) => n + 1);
+      setHasSynced(true);
+      localStorage.setItem('spendlens_has_synced', 'true');
       setAuthBanner(
         result?.parsed > 0
           ? `Gmail sync complete! Parsed ${result.parsed} transactions from ${result.fetched || 0} matched emails.`
           : `Sync complete. No new transaction emails parsed from ${result.fetched || 0} emails.`
       );
     } catch (err) {
+      setSyncError(getSyncErrorMessage(err, 'Sync failed. Please try reconnecting Gmail.'));
       setAuthBanner(getSyncErrorMessage(err, 'Sync failed. Please try reconnecting Gmail.'));
     } finally {
       setSyncOverlay(false);
@@ -223,8 +238,10 @@ export default function App() {
     } catch (e) {}
     localStorage.removeItem('gmail_connected');
     localStorage.removeItem('spendlens_user_email');
+    localStorage.removeItem('spendlens_has_synced');
     setIsConnected(false);
     setUserEmail(null);
+    setHasSynced(false);
     setDropdownOpen(false);
     setAuthBanner('Account disconnected.');
     window.location.reload();
@@ -263,9 +280,91 @@ export default function App() {
     }
   };
 
+  // --- GATE: Loading auth check ---
+  if (!authChecked) {
+    return (
+      <div className="fixed inset-0 bg-[#FAF8F3] flex flex-col items-center justify-center p-6 text-center">
+        <div className="flex flex-col items-center gap-4 p-10 rounded-2xl bg-white border border-[#E8E3D8] shadow-xl max-w-sm w-full">
+          <div className="w-12 h-12 border-4 border-[#E8E3D8] border-t-[#2D5C4E] rounded-full animate-spin" />
+          <p className="text-xs text-[#6C6A65] font-mono">Checking account status...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // --- GATE: Not signed in → Show full-screen landing ---
+  if (!isConnected || !userEmail) {
+    return (
+      <ErrorBoundary>
+        <div className="min-h-screen bg-[#FAF8F3] text-[#1C1B19] font-sans">
+          <UnauthenticatedLanding />
+        </div>
+      </ErrorBoundary>
+    );
+  }
+
+  // --- GATE: Signed in but not yet synced → mandatory sync screen ---
+  if (!hasSynced) {
+    return (
+      <ErrorBoundary>
+        <div className="fixed inset-0 z-[9999] bg-[#FAF8F3] flex flex-col items-center justify-center p-6 text-center animate-fadeIn">
+          <div className="flex flex-col items-center gap-5 p-10 rounded-2xl bg-white border border-[#E8E3D8] shadow-xl max-w-md w-full">
+            {isSyncing ? (
+              <>
+                <div className="relative">
+                  <div className="w-16 h-16 border-4 border-[#E8E3D8] border-t-[#2D5C4E] rounded-full animate-spin" />
+                  <RotateCw className="w-6 h-6 text-[#2D5C4E] absolute inset-0 m-auto animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-[#1C1B19] tracking-tight">Fetching & Parsing Emails</h3>
+                  <p className="text-xs text-[#6C6A65] mt-2 leading-relaxed">
+                    Scanning your Gmail inbox for bank alerts & UPI payment confirmations.
+                  </p>
+                  <div className="mt-4 px-3 py-1.5 bg-[#EBF3F0] border border-[#D2E4DC] rounded-md text-[11px] font-mono text-[#2D5C4E]">
+                    Data will appear automatically when parsing finishes
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="w-16 h-16 rounded-2xl bg-[#EBF3F0] border border-[#D2E4DC] flex items-center justify-center text-[#2D5C4E]">
+                  <Wallet className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-[#1C1B19] tracking-tight">
+                    {syncError ? 'Sync Failed' : 'Sync Your Emails'}
+                  </h3>
+                  <p className="text-xs text-[#6C6A65] mt-2 leading-relaxed">
+                    {syncError
+                      ? syncError
+                      : `Welcome, ${userEmail}! Sync your Gmail inbox to parse bank alerts, UPI receipts, and subscription emails into your personal passbook.`}
+                  </p>
+                </div>
+                <button
+                  onClick={handleSyncNow}
+                  className="mt-2 px-8 py-3 bg-[#2D5C4E] hover:bg-[#254B40] text-white font-semibold text-sm rounded-xl transition shadow-sm flex items-center gap-2.5"
+                >
+                  <RotateCw className="w-4 h-4" />
+                  <span>{syncError ? 'Retry Sync' : 'Sync Emails Now'}</span>
+                </button>
+                <button
+                  onClick={handleDisconnect}
+                  className="text-xs text-[#6C6A65] hover:text-[#B33F3F] transition mt-1"
+                >
+                  Use a different account
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </ErrorBoundary>
+    );
+  }
+
+  // --- MAIN APP: Authenticated + synced ---
   return (
     <ErrorBoundary>
-      {/* Full-screen syncing overlay - hides all data until parsing is 100% complete */}
+      {/* Full-screen syncing overlay for re-syncs */}
       {syncOverlay && (
         <div className="fixed inset-0 z-[9999] bg-[#FAF8F3] flex flex-col items-center justify-center p-6 text-center animate-fadeIn">
           <div className="flex flex-col items-center gap-5 p-10 rounded-2xl bg-white border border-[#E8E3D8] shadow-xl max-w-md w-full">
@@ -376,24 +475,14 @@ export default function App() {
 
                 {/* Gmail Connection Status Button / Dropdown */}
                 <div className="relative" ref={dropdownRef}>
-                  {isConnected && userEmail ? (
-                    <button
-                      onClick={() => setDropdownOpen(!dropdownOpen)}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-[#EBF3F0] border border-[#D2E4DC] hover:bg-[#E2EFEA] text-[#2D5C4E] rounded-md text-xs font-semibold transition"
-                    >
-                      <CheckCircle className="w-3.5 h-3.5 text-[#2D5C4E]" />
-                      <span>{userEmail}</span>
-                      <ChevronDown className="w-3.5 h-3.5 opacity-70 ml-1" />
-                    </button>
-                  ) : (
-                    <a
-                      href={`${API_URL}/auth/google?origin=${encodeURIComponent(window.location.origin)}`}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-[#2D5C4E] hover:bg-[#254B40] text-white rounded-md text-xs font-semibold transition shadow-xs"
-                    >
-                      <Wallet className="w-3.5 h-3.5" />
-                      <span>Connect Gmail</span>
-                    </a>
-                  )}
+                  <button
+                    onClick={() => setDropdownOpen(!dropdownOpen)}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-[#EBF3F0] border border-[#D2E4DC] hover:bg-[#E2EFEA] text-[#2D5C4E] rounded-md text-xs font-semibold transition"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5 text-[#2D5C4E]" />
+                    <span>{userEmail}</span>
+                    <ChevronDown className="w-3.5 h-3.5 opacity-70 ml-1" />
+                  </button>
 
                   {/* Dropdown Menu */}
                   {dropdownOpen && (

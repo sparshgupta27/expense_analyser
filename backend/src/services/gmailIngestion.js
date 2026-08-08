@@ -257,7 +257,7 @@ async function syncEmails() {
     
     let pageToken = null;
     const allMessages = [];
-    const MAX_PAGES = 3;
+    const MAX_PAGES = 15; // Scan up to 1,500 emails (12-24 months of history)
     let pageCount = 0;
 
     do {
