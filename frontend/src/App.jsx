@@ -6,6 +6,7 @@ import {
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import Subscriptions from './pages/Subscriptions';
+import UnauthenticatedLanding from './components/UnauthenticatedLanding';
 import { getAuthStatus, triggerSync, disconnectAuth, API_URL } from './api/client';
 
 class ErrorBoundary extends React.Component {
