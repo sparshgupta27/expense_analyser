@@ -109,9 +109,9 @@ export default function App() {
 
       if (needsAutoSync) {
         setSyncOverlay(true);
+        setIsSyncing(true);
         triggerSync()
           .then((result) => {
-            setSyncOverlay(false);
             if (result?.latest_month) {
               setSelectedMonth(result.latest_month);
             }
@@ -127,8 +127,11 @@ export default function App() {
             );
           })
           .catch((err) => {
-            setSyncOverlay(false);
             setAuthBanner(getSyncErrorMessage(err, 'Gmail connected, but sync failed.'));
+          })
+          .finally(() => {
+            setSyncOverlay(false);
+            setIsSyncing(false);
           });
       } else {
         setAuthBanner('Gmail Account Connected Successfully!');
@@ -193,17 +196,24 @@ export default function App() {
 
   const handleSyncNow = async () => {
     setIsSyncing(true);
+    setSyncOverlay(true);
     setDropdownOpen(false);
     try {
-      await triggerSync();
-      setAuthBanner('Gmail sync running! Fetching and parsing your bank & UPI emails...');
-      setTimeout(() => {
-        setRefreshNonce((n) => n + 1);
-        setIsSyncing(false);
-      }, 4000);
+      const result = await triggerSync();
+      if (result?.latest_month) {
+        setSelectedMonth(result.latest_month);
+      }
+      setRefreshNonce((n) => n + 1);
+      setAuthBanner(
+        result?.parsed > 0
+          ? `Gmail sync complete! Parsed ${result.parsed} transactions from ${result.fetched || 0} matched emails.`
+          : `Sync complete. No new transaction emails parsed from ${result.fetched || 0} emails.`
+      );
     } catch (err) {
-      setIsSyncing(false);
       setAuthBanner(getSyncErrorMessage(err, 'Sync failed. Please try reconnecting Gmail.'));
+    } finally {
+      setSyncOverlay(false);
+      setIsSyncing(false);
     }
   };
 
@@ -255,15 +265,22 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      {/* Full-screen syncing overlay */}
+      {/* Full-screen syncing overlay - hides all data until parsing is 100% complete */}
       {syncOverlay && (
-        <div className="fixed inset-0 z-[9999] bg-[#FAF8F3]/95 backdrop-blur-sm flex flex-col items-center justify-center">
-          <div className="flex flex-col items-center gap-5 p-10 rounded-2xl bg-white border border-[#E8E3D8] shadow-lg max-w-sm mx-4">
-            <div className="w-14 h-14 border-4 border-[#E8E3D8] border-t-[#2D5C4E] rounded-full animate-spin" />
-            <div className="text-center">
-              <h3 className="text-lg font-bold text-[#1C1B19] tracking-tight">Syncing Emails</h3>
-              <p className="text-sm text-[#6C6A65] mt-1.5">Scanning your Gmail for transaction emails...</p>
-              <p className="text-xs text-[#6C6A65] mt-3 font-mono">This may take a moment</p>
+        <div className="fixed inset-0 z-[9999] bg-[#FAF8F3] flex flex-col items-center justify-center p-6 text-center animate-fadeIn">
+          <div className="flex flex-col items-center gap-5 p-10 rounded-2xl bg-white border border-[#E8E3D8] shadow-xl max-w-md w-full">
+            <div className="relative">
+              <div className="w-16 h-16 border-4 border-[#E8E3D8] border-t-[#2D5C4E] rounded-full animate-spin" />
+              <RotateCw className="w-6 h-6 text-[#2D5C4E] absolute inset-0 m-auto animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold text-[#1C1B19] tracking-tight">Fetching & Parsing Emails</h3>
+              <p className="text-xs text-[#6C6A65] mt-2 leading-relaxed">
+                Scanning your Gmail inbox for bank alerts & UPI payment confirmations.
+              </p>
+              <div className="mt-4 px-3 py-1.5 bg-[#EBF3F0] border border-[#D2E4DC] rounded-md text-[11px] font-mono text-[#2D5C4E]">
+                Data will appear automatically when parsing finishes
+              </div>
             </div>
           </div>
         </div>
