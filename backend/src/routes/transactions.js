@@ -134,6 +134,11 @@ router.get('/', async (req, res) => {
  * Set a manual category override.
  */
 router.patch('/:id/category', async (req, res) => {
+  const userEmail = getRequestUserEmail(req);
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   try {
     const { id } = req.params;
     const { category } = req.body;
@@ -144,8 +149,8 @@ router.patch('/:id/category', async (req, res) => {
       });
     }
 
-    // Verify transaction exists
-    const txn = await query('SELECT id FROM transactions WHERE id = $1', [id]);
+    // Verify transaction exists and belongs to logged-in user
+    const txn = await query('SELECT id FROM transactions WHERE id = $1 AND user_email = $2', [id, userEmail]);
     if (txn.rows.length === 0) {
       return res.status(404).json({ error: 'Transaction not found' });
     }
@@ -161,9 +166,14 @@ router.patch('/:id/category', async (req, res) => {
 
 /**
  * GET /api/transactions/:id
- * Get a single transaction with its original email.
+ * Get a single transaction with its original email (scoped to active user).
  */
 router.get('/:id', async (req, res) => {
+  const userEmail = getRequestUserEmail(req);
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
+    return res.status(404).json({ error: 'Transaction not found' });
+  }
+
   try {
     const { id } = req.params;
 
@@ -180,8 +190,8 @@ router.get('/:id', async (req, res) => {
         re.received_at AS email_received_at
       FROM transactions t
       LEFT JOIN raw_emails re ON re.gmail_message_id = t.gmail_message_id
-      WHERE t.id = $1
-    `, [id]);
+      WHERE t.id = $1 AND t.user_email = $2
+    `, [id, userEmail]);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Transaction not found' });

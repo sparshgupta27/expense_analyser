@@ -110,6 +110,11 @@ router.get('/', async (req, res) => {
  * Renewals in the next 7 days.
  */
 router.get('/upcoming', async (req, res) => {
+  const userEmail = getRequestUserEmail(req);
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
+    return res.json([]);
+  }
+
   try {
     const { rows } = await query(`
       SELECT
@@ -125,10 +130,11 @@ router.get('/upcoming', async (req, res) => {
         END AS frequency
       FROM subscriptions s
       LEFT JOIN merchant_profiles mp ON mp.normalized_name = s.merchant_normalized
-      WHERE s.next_expected_date <= NOW() + INTERVAL '7 days'
+      WHERE s.user_email = $1
+        AND s.next_expected_date <= NOW() + INTERVAL '7 days'
         AND s.ghost_flag = false
       ORDER BY s.next_expected_date ASC
-    `);
+    `, [userEmail]);
 
     res.json(rows.map((r) => ({
       ...r,
