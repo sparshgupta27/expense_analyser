@@ -147,10 +147,13 @@ function strictTransactionParser(subject, body, sender, emailDate) {
   const dateMatch = fullText.match(/(?:on|dated?)\s*([\d\-\/\sA-Za-z]{6,12})/i);
   const txDate = dateMatch ? parseIndianDate(dateMatch[1], emailDate) : emailDate;
 
-  // Extract merchant name
-  let merchant = normalize(fullText);
-  if (!merchant || merchant === 'Bank Merchant' || merchant === 'Unknown') {
-    merchant = cleanMerchantName(sender, subject);
+  // Extract merchant name (prioritize verified sender/subject brand, then body text)
+  let merchant = cleanMerchantName(sender, subject);
+  if (!merchant || merchant === 'Bank Merchant') {
+    const bodyMerchant = normalize(fullText);
+    if (bodyMerchant && bodyMerchant !== 'Unknown' && bodyMerchant !== 'Bank Merchant') {
+      merchant = bodyMerchant;
+    }
   }
 
   const isCredit = /\b(?:credited to|received in your|refund of|refund processed|cashback credited)\b/i.test(fullText) && !/\bdebited\b/i.test(fullText);
