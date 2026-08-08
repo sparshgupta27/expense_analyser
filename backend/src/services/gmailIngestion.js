@@ -107,6 +107,9 @@ const KNOWN_FINANCIAL_SENDERS = [
   'swiggy', 'zomato', 'uber', 'amazon', 'flipkart', 'blinkit', 'zepto', 'netflix', 'spotify', 'apple'
 ];
 
+const { parseIndianDate } = require('../utils/dateParser');
+const { normalize } = require('./merchantNormalizer');
+
 /**
  * Strict fallback parser for real transaction emails only.
  */
@@ -140,7 +143,16 @@ function strictTransactionParser(subject, body, sender, emailDate) {
   const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
   if (isNaN(amount) || amount <= 0 || amount > 1000000) return null;
 
-  const merchant = cleanMerchantName(sender, subject);
+  // Extract embedded date from text if present (e.g. "on 04-Aug-2026")
+  const dateMatch = fullText.match(/(?:on|dated?)\s*([\d\-\/\sA-Za-z]{6,12})/i);
+  const txDate = dateMatch ? parseIndianDate(dateMatch[1], emailDate) : emailDate;
+
+  // Extract merchant name
+  let merchant = normalize(fullText);
+  if (!merchant || merchant === 'Bank Merchant' || merchant === 'Unknown') {
+    merchant = cleanMerchantName(sender, subject);
+  }
+
   const isCredit = /\b(?:credited to|received in your|refund of|refund processed|cashback credited)\b/i.test(fullText) && !/\bdebited\b/i.test(fullText);
 
   return {
@@ -148,7 +160,7 @@ function strictTransactionParser(subject, body, sender, emailDate) {
     merchant_raw: merchant,
     merchant_normalized: merchant,
     transaction_type: isCredit ? 'credit' : 'debit',
-    transaction_date: emailDate,
+    transaction_date: txDate,
     confidence: 0.9,
   };
 }
