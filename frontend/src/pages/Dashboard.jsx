@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import {
   TrendingUp, TrendingDown, DollarSign, CreditCard, Layers,
-  ShoppingBag, Sparkles, Receipt, ArrowUpRight, ArrowDownRight
+  ShoppingBag, Sparkles, Receipt, ArrowUpRight, ArrowDownRight, CheckCircle, RotateCw
 } from 'lucide-react';
 import { Card, CardTitle, Metric, Text } from '../components/ui/Card';
 import { Alert } from '../components/ui/Alert';
@@ -36,7 +36,15 @@ const formatMonthLabel = (monthStr) => {
   return `${monthName} '${shortYear}`;
 };
 
-export default function Dashboard({ month, range = 1, refreshKey = 0 }) {
+export default function Dashboard({
+  month,
+  range = 1,
+  refreshKey = 0,
+  isConnected = false,
+  userEmail = null,
+  onSync,
+  isSyncing = false,
+}) {
   const [summary, setSummary] = useState(null);
   const [trend, setTrend] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -101,6 +109,34 @@ export default function Dashboard({ month, range = 1, refreshKey = 0 }) {
 
   return (
     <div className="space-y-6">
+      {/* EMPTY STATE BANNER - shown when connected but no transactions found */}
+      {(summary?.transaction_count === 0 || totalSpent === 0) ? (
+        <div className="p-6 sm:p-8 rounded-xl bg-white border border-[#E8E3D8] shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="space-y-2 max-w-xl">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-[#EBF3F0] text-[#2D5C4E] text-xs font-semibold">
+              <CheckCircle className="w-3.5 h-3.5 text-[#2D5C4E]" />
+              <span>Connected: {userEmail}</span>
+            </div>
+            <h3 className="text-lg sm:text-xl font-bold text-[#1C1B19] tracking-tight">
+              No Expense Receipts Found for This Period
+            </h3>
+            <p className="text-xs text-[#6C6A65] leading-relaxed">
+              No transaction emails were parsed for {month}. Try syncing again or select a different month to view your expenses.
+            </p>
+          </div>
+          {onSync && (
+            <button
+              onClick={onSync}
+              disabled={isSyncing}
+              className="flex-shrink-0 px-5 py-2.5 bg-[#2D5C4E] hover:bg-[#254B40] text-white text-xs font-semibold rounded-md shadow-xs transition flex items-center gap-2"
+            >
+              <RotateCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'Syncing Emails...' : 'Sync Emails Now'}</span>
+            </button>
+          )}
+        </div>
+      ) : null}
+
       {/* SIGNATURE PASSBOOK ENTRY LINE HEADER */}
       <section className="bg-white border-t border-b border-[#E8E3D8] py-4 px-4 sm:px-6 shadow-2xs">
         <div className="flex items-center justify-between text-[11px] font-mono tracking-widest text-[#6C6A65] uppercase pb-2 border-b border-dashed border-[#E8E3D8] mb-3">
@@ -177,7 +213,7 @@ export default function Dashboard({ month, range = 1, refreshKey = 0 }) {
               <>
                 {/* Horizontal Stacked Bar */}
                 <div className="h-3.5 w-full bg-[#F5F2EA] rounded-full overflow-hidden flex mb-5 border border-[#E8E3D8]">
-                  {safeCategories.map((c, i) => (
+                  {safeCategories.map((c) => (
                     <div
                       key={c.category}
                       style={{
@@ -313,4 +349,3 @@ export default function Dashboard({ month, range = 1, refreshKey = 0 }) {
     </div>
   );
 }
-

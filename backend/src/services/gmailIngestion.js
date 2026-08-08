@@ -1,7 +1,7 @@
 const { google } = require('googleapis');
 const config = require('../config');
 const { query } = require('../db/pool');
-const { getAuthenticatedClient } = require('../auth/google');
+const { getAuthenticatedClient, getCurrentUserEmail } = require('../auth/google');
 const { parse } = require('../parsers');
 const mockStore = require('../db/mockStore');
 
@@ -107,6 +107,9 @@ const KNOWN_FINANCIAL_SENDERS = [
   'swiggy', 'zomato', 'uber', 'amazon', 'flipkart', 'blinkit', 'zepto', 'netflix', 'spotify', 'apple'
 ];
 
+const { parseIndianDate } = require('../utils/dateParser');
+const { normalize } = require('./merchantNormalizer');
+
 /**
  * Strict fallback parser for real transaction emails only.
  */
@@ -140,7 +143,19 @@ function strictTransactionParser(subject, body, sender, emailDate) {
   const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
   if (isNaN(amount) || amount <= 0 || amount > 1000000) return null;
 
-  const merchant = cleanMerchantName(sender, subject);
+  // Extract embedded date from text if present (e.g. "on 04-Aug-2026")
+  const dateMatch = fullText.match(/(?:on|dated?)\s*([\d\-\/\sA-Za-z]{6,12})/i);
+  const txDate = dateMatch ? parseIndianDate(dateMatch[1], emailDate) : emailDate;
+
+  // Extract merchant name (prioritize verified sender/subject brand, then body text)
+  let merchant = cleanMerchantName(sender, subject);
+  if (!merchant || merchant === 'Bank Merchant') {
+    const bodyMerchant = normalize(fullText);
+    if (bodyMerchant && bodyMerchant !== 'Unknown' && bodyMerchant !== 'Bank Merchant') {
+      merchant = bodyMerchant;
+    }
+  }
+
   const isCredit = /\b(?:credited to|received in your|refund of|refund processed|cashback credited)\b/i.test(fullText) && !/\bdebited\b/i.test(fullText);
 
   return {
@@ -148,24 +163,36 @@ function strictTransactionParser(subject, body, sender, emailDate) {
     merchant_raw: merchant,
     merchant_normalized: merchant,
     transaction_type: isCredit ? 'credit' : 'debit',
-    transaction_date: emailDate,
+    transaction_date: txDate,
     confidence: 0.9,
   };
 }
 
-async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, transaction }) {
+async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, transaction, userEmail }) {
   await query(
-    `INSERT INTO raw_emails (gmail_message_id, sender, subject, body, received_at, processed)
-     VALUES ($1, $2, $3, $4, $5, true)
+    `INSERT INTO raw_emails (gmail_message_id, sender, subject, body, received_at, processed, user_email)
+     VALUES ($1, $2, $3, $4, $5, true, $6)
      ON CONFLICT (gmail_message_id)
      DO UPDATE SET
        sender = EXCLUDED.sender,
        subject = EXCLUDED.subject,
        body = EXCLUDED.body,
        received_at = EXCLUDED.received_at,
-       processed = true`,
-    [msg.id, sender, subject, body, receivedAt]
+       processed = true,
+       user_email = EXCLUDED.user_email`,
+    [msg.id, sender, subject, body, receivedAt, userEmail]
   );
+
+  if (transaction.merchant_normalized) {
+    try {
+      await query(
+        `INSERT INTO merchant_profiles (normalized_name, display_name, category)
+         VALUES ($1, $1, $2)
+         ON CONFLICT (normalized_name) DO NOTHING`,
+        [transaction.merchant_normalized, transaction.category || 'Other']
+      );
+    } catch (e) {}
+  }
 
   await query(
     `INSERT INTO transactions (
@@ -176,9 +203,10 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
        category,
        transaction_type,
        transaction_date,
-       parse_confidence
+       parse_confidence,
+       user_email
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (gmail_message_id)
      DO UPDATE SET
        amount = EXCLUDED.amount,
@@ -187,7 +215,8 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
        category = EXCLUDED.category,
        transaction_type = EXCLUDED.transaction_type,
        transaction_date = EXCLUDED.transaction_date,
-       parse_confidence = EXCLUDED.parse_confidence`,
+       parse_confidence = EXCLUDED.parse_confidence,
+       user_email = EXCLUDED.user_email`,
     [
       msg.id,
       transaction.amount,
@@ -197,6 +226,7 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
       transaction.transaction_type,
       transaction.transaction_date,
       transaction.confidence || 0.9,
+      userEmail,
     ]
   );
 }
@@ -206,9 +236,15 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
  * Uses parallel batching for speed.
  */
 async function syncEmails() {
-  console.log('[Ingestion] Starting strict transaction email sync from Gmail...');
+  const userEmail = getCurrentUserEmail();
+  console.log(`[Ingestion] Starting strict transaction email sync for ${userEmail}...`);
 
-  const auth = await getAuthenticatedClient();
+  if (!userEmail) {
+    console.warn('[Ingestion] Not authenticated with Google OAuth. User must authorize first.');
+    return { fetched: 0, parsed: 0, status: 'unauthenticated' };
+  }
+
+  const auth = await getAuthenticatedClient(userEmail);
   if (!auth) {
     console.warn('[Ingestion] Not authenticated with Google OAuth. User must authorize first.');
     return { fetched: 0, parsed: 0, status: 'unauthenticated' };
@@ -221,7 +257,7 @@ async function syncEmails() {
     
     let pageToken = null;
     const allMessages = [];
-    const MAX_PAGES = 3;
+    const MAX_PAGES = 15; // Scan up to 1,500 emails (12-24 months of history)
     let pageCount = 0;
 
     do {
@@ -240,7 +276,7 @@ async function syncEmails() {
 
     console.log(`[Ingestion] Total ${allMessages.length} emails found for processing.`);
 
-    mockStore.clearRealTransactions();
+    mockStore.clearRealTransactions(userEmail);
     let parsedCount = 0;
     let savedCount = 0;
     let dbSaveErrors = 0;
@@ -286,6 +322,7 @@ async function syncEmails() {
               transaction_type: parsedResult.transaction_type || 'debit',
               transaction_date: txDate,
               confidence: parsedResult.confidence || 0.9,
+              user_email: userEmail,
             };
 
             try {
@@ -296,6 +333,7 @@ async function syncEmails() {
                 body,
                 receivedAt,
                 transaction,
+                userEmail,
               });
               transaction.saved = true;
             } catch (dbErr) {
@@ -311,7 +349,7 @@ async function syncEmails() {
 
       for (const result of results) {
         if (result.status === 'fulfilled' && result.value) {
-          mockStore.addRealParsedTransaction(result.value);
+          mockStore.addRealParsedTransaction(result.value, userEmail);
           parsedCount++;
           if (result.value.saved) {
             savedCount++;
@@ -329,25 +367,24 @@ async function syncEmails() {
       }
     }
 
-    const latestMonth = latestTransactionDate
-      ? `${latestTransactionDate.getFullYear()}-${String(latestTransactionDate.getMonth() + 1).padStart(2, '0')}`
-      : null;
-
     console.log(`[Ingestion] Sync complete! Parsed ${parsedCount} clean transactions from Gmail. Saved ${savedCount} to Postgres.`);
     return {
       fetched: allMessages.length,
       parsed: parsedCount,
       saved: savedCount,
-      db_save_errors: dbSaveErrors,
-      latest_month: latestMonth,
-      status: dbSaveErrors > 0 && savedCount === 0 ? 'partial_error' : 'success',
+      dbSaveErrors,
+      user_email: userEmail,
+      status: 'completed',
     };
-
   } catch (err) {
-    const details = getErrorDetails(err);
-    console.error('[Ingestion] Error during Gmail API call:', details);
-    return { fetched: 0, parsed: 0, status: 'error', error: 'Gmail sync failed', details };
+    console.error('[Ingestion] Error fetching messages:', getErrorDetails(err));
+    return { fetched: 0, parsed: 0, status: 'error', error: getErrorDetails(err) };
   }
 }
 
-module.exports = { syncEmails, cleanMerchantName, strictTransactionParser };
+module.exports = {
+  syncEmails,
+  strictTransactionParser,
+  cleanMerchantName,
+  extractBody,
+};

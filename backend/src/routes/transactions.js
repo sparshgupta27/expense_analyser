@@ -5,6 +5,7 @@
 const express = require('express');
 const { query } = require('../db/pool');
 const { setOverride } = require('../services/categorizer');
+const { getCurrentUserEmail, getRequestUserEmail } = require('../auth/google');
 
 const router = express.Router();
 
@@ -15,19 +16,25 @@ const VALID_CATEGORIES = [
 
 /**
  * GET /api/transactions
- * Paginated, filterable transaction list.
- *
- * Query params: page, limit, category, search, start_date, end_date, type
+ * Paginated, filterable transaction list scoped by user_email.
  */
 router.get('/', async (req, res) => {
+  const userEmail = getRequestUserEmail(req);
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
+    return res.json({
+      data: [],
+      pagination: { page: 1, limit: 20, total: 0, total_pages: 1 },
+    });
+  }
+
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const offset = (page - 1) * limit;
 
-    let whereClause = 'WHERE 1=1';
-    const params = [];
-    let paramIndex = 1;
+    let whereClause = 'WHERE t.user_email = $1';
+    const params = [userEmail];
+    let paramIndex = 2;
 
     // Category filter
     if (req.query.category) {
@@ -56,6 +63,12 @@ router.get('/', async (req, res) => {
       whereClause += ` AND t.transaction_date <= $${paramIndex}`;
       params.push(req.query.end_date);
       paramIndex++;
+    }
+    if (!req.query.start_date && req.query.month) {
+      const rangeMonths = parseInt(req.query.range || req.query.rangeMonths) || 1;
+      whereClause += ` AND t.transaction_date >= TO_DATE($${paramIndex}, 'YYYY-MM') - (($${paramIndex + 1}::int - 1) * INTERVAL '1 month') AND t.transaction_date < TO_DATE($${paramIndex}, 'YYYY-MM') + INTERVAL '1 month'`;
+      params.push(req.query.month, rangeMonths);
+      paramIndex += 2;
     }
 
     // Transaction type
@@ -88,6 +101,7 @@ router.get('/', async (req, res) => {
         t.transaction_type,
         t.transaction_date,
         t.parse_confidence,
+        t.user_email,
         t.created_at,
         (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id) IS NOT NULL AS has_override
       FROM transactions t
@@ -110,9 +124,13 @@ router.get('/', async (req, res) => {
       },
     });
   } catch (err) {
+    const mockStore = require('../db/mockStore');
+    const month = req.query.start_date ? req.query.start_date.substring(0, 7) : req.query.month;
+    const rangeMonths = parseInt(req.query.range || req.query.rangeMonths) || 1;
+    let txs = mockStore.getStoreTransactions(month, rangeMonths, userEmail);
     res.json({
-      data: [],
-      pagination: { page: 1, limit: 20, total: 0, total_pages: 0 },
+      data: txs,
+      pagination: { page: 1, limit: 20, total: txs.length, total_pages: 1 },
     });
   }
 });
@@ -122,6 +140,11 @@ router.get('/', async (req, res) => {
  * Set a manual category override.
  */
 router.patch('/:id/category', async (req, res) => {
+  const userEmail = getRequestUserEmail(req);
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   try {
     const { id } = req.params;
     const { category } = req.body;
@@ -132,8 +155,8 @@ router.patch('/:id/category', async (req, res) => {
       });
     }
 
-    // Verify transaction exists
-    const txn = await query('SELECT id FROM transactions WHERE id = $1', [id]);
+    // Verify transaction exists and belongs to logged-in user
+    const txn = await query('SELECT id FROM transactions WHERE id = $1 AND user_email = $2', [id, userEmail]);
     if (txn.rows.length === 0) {
       return res.status(404).json({ error: 'Transaction not found' });
     }
@@ -149,9 +172,14 @@ router.patch('/:id/category', async (req, res) => {
 
 /**
  * GET /api/transactions/:id
- * Get a single transaction with its original email.
+ * Get a single transaction with its original email (scoped to active user).
  */
 router.get('/:id', async (req, res) => {
+  const userEmail = getRequestUserEmail(req);
+  if (!userEmail || userEmail === 'default_user@gmail.com') {
+    return res.status(404).json({ error: 'Transaction not found' });
+  }
+
   try {
     const { id } = req.params;
 
@@ -168,8 +196,8 @@ router.get('/:id', async (req, res) => {
         re.received_at AS email_received_at
       FROM transactions t
       LEFT JOIN raw_emails re ON re.gmail_message_id = t.gmail_message_id
-      WHERE t.id = $1
-    `, [id]);
+      WHERE t.id = $1 AND t.user_email = $2
+    `, [id, userEmail]);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Transaction not found' });

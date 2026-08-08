@@ -1,48 +1,97 @@
 /**
- * Merchant Name Normalizer
+ * Merchant Name Normalizer & Cleaner
  *
- * Strips transaction IDs, reference numbers, and suffixes from raw
- * merchant names to produce a clean, consistent normalized form.
+ * Extracts clean, recognizable merchant names from raw bank alerts,
+ * UPI handles, card descriptors, and reference codes.
  */
 
-/**
- * Normalize a raw merchant name.
- * "SWIGGY*ORDER8827321" → "Swiggy"
- * "UBER INDIA TECHNOLOGY PVT LTD" → "Uber India Technology"
- */
+const BRAND_ALIASES = [
+  { match: /\b(?:swiggy)\b/i, name: 'Swiggy' },
+  { match: /\b(?:zomato)\b/i, name: 'Zomato' },
+  { match: /\b(?:blinkit|grofers)\b/i, name: 'Blinkit' },
+  { match: /\b(?:zepto)\b/i, name: 'Zepto' },
+  { match: /\b(?:instamart)\b/i, name: 'Instamart' },
+  { match: /\b(?:bigbasket)\b/i, name: 'Bigbasket' },
+  { match: /\b(?:amazon|amzn)\b/i, name: 'Amazon' },
+  { match: /\b(?:flipkart)\b/i, name: 'Flipkart' },
+  { match: /\b(?:myntra)\b/i, name: 'Myntra' },
+  { match: /\b(?:ajio)\b/i, name: 'Ajio' },
+  { match: /\b(?:nykaa)\b/i, name: 'Nykaa' },
+  { match: /\b(?:uber)\b/i, name: 'Uber' },
+  { match: /\b(?:ola)\b/i, name: 'Ola' },
+  { match: /\b(?:rapido)\b/i, name: 'Rapido' },
+  { match: /\b(?:irctc)\b/i, name: 'IRCTC' },
+  { match: /\b(?:netflix)\b/i, name: 'Netflix' },
+  { match: /\b(?:spotify)\b/i, name: 'Spotify' },
+  { match: /\b(?:airtel)\b/i, name: 'Airtel' },
+  { match: /\b(?:jio)\b/i, name: 'Jio' },
+  { match: /\b(?:bescom)\b/i, name: 'Bescom' },
+  { match: /\b(?:bookmyshow)\b/i, name: 'BookMyShow' },
+  { match: /\b(?:cred)\b/i, name: 'CRED' },
+  { match: /\b(?:dominos)\b/i, name: 'Dominos' },
+  { match: /\b(?:mcdonalds)\b/i, name: 'McDonalds' },
+  { match: /\b(?:kfc)\b/i, name: 'KFC' },
+  { match: /\b(?:starbucks)\b/i, name: 'Starbucks' },
+  { match: /\b(?:dmarc|openai|chatgpt)\b/i, name: 'OpenAI' },
+  { match: /\b(?:cursor)\b/i, name: 'Cursor' },
+  { match: /\b(?:github)\b/i, name: 'GitHub' },
+  { match: /\b(?:apple)\b/i, name: 'Apple' },
+];
+
 function normalize(merchantRaw) {
-  if (!merchantRaw) return 'Unknown';
+  if (!merchantRaw || typeof merchantRaw !== 'string') return 'Unknown';
 
-  let name = merchantRaw
-    // Strip everything after * (common in card statements)
-    .replace(/\*.*$/, '')
-    // Strip long numeric sequences (order/reference IDs)
-    .replace(/[0-9]{6,}/g, '')
-    // Strip short IDs after common prefixes
-    .replace(/#\s*\w+/g, '')
-    // Strip common suffixes
-    .replace(/\s*(?:pvt|private|ltd|limited|inc|llp|llc)\s*/gi, '')
-    // Strip "India", "Technology", etc. which add noise (each independently)
-    .replace(/\b(?:india|technology|technologies|solutions)\b/gi, '')
-    // Strip payment method references
+  let raw = merchantRaw.trim();
+
+  // Parse UPI paths like "UPI/DR/412345678901/BIGBASKET/YESB0BIGBAS/UPI"
+  if (raw.includes('/') || raw.toUpperCase().includes('UPI')) {
+    const parts = raw.split(/[\/\-]/).map((p) => p.trim()).filter(Boolean);
+    for (const part of parts) {
+      for (const { match, name } of BRAND_ALIASES) {
+        if (match.test(part)) return name;
+      }
+    }
+  }
+
+  // Parse VPAs like "zomato@icici"
+  if (raw.includes('@')) {
+    const handle = raw.split('@')[0].trim();
+    for (const { match, name } of BRAND_ALIASES) {
+      if (match.test(handle)) return name;
+    }
+  }
+
+  // Strip noise, numeric IDs, order IDs
+  let name = raw
+    .replace(/\*.*$/, '')                                         // Strip everything after *
+    .replace(/[0-9]{6,}/g, '')                                    // Strip long numeric IDs
+    .replace(/#\s*\w+/g, '')                                       // Strip #orderid
+    .replace(/\s*(?:pvt|private|ltd|limited|inc|llp|llc|co)\s*/gi, '')
+    .replace(/\b(?:technology|technologies|solutions|services|payments?)\b/gi, '')
+    .replace(/\b(?:india)\b/gi, '')                               // Strip "India" independently
     .replace(/\s*(?:via\s+)?(?:UPI|NEFT|IMPS|RTGS|PhonePe|GPay|Paytm)\s*/gi, '')
-    // Strip reference numbers
     .replace(/\s*ref\s*(?:no|number)?\.?\s*[\w\-]+/gi, '')
     .replace(/\s*txn\s*(?:no|id)?\.?\s*[\w\-]+/gi, '')
-    // Collapse multiple spaces
     .replace(/\s+/g, ' ')
-    // Strip leading/trailing whitespace and punctuation
     .replace(/^[\s\-_.*]+|[\s\-_.*]+$/g, '')
     .trim();
 
-  if (!name) return 'Unknown';
+  if (!name || /^\d+$/.test(name)) {
+    if (/\b(?:atm|withdrawal)\b/i.test(merchantRaw)) return 'ATM Withdrawal';
+    return 'Unknown';
+  }
+
+  // Exact single-word brand check (e.g. "UBER" -> "Uber", but "UBER TRIP" -> "Uber Trip")
+  for (const { match, name: brandName } of BRAND_ALIASES) {
+    if (match.test(name) && name.toLowerCase() === brandName.toLowerCase()) {
+      return brandName;
+    }
+  }
 
   // Title case
-  name = name
+  return name
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase());
-
-  return name;
 }
 
 module.exports = { normalize };

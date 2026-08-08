@@ -8,6 +8,14 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+api.interceptors.request.use((config) => {
+  const email = localStorage.getItem('spendlens_user_email');
+  if (email && email !== 'default_user@gmail.com') {
+    config.headers['X-User-Email'] = email;
+  }
+  return config;
+});
+
 // Dashboard
 export const getDashboardSummary = (month, range = 1) =>
   api.get('/api/dashboard/summary', { params: { month, range } }).then((r) => r.data);

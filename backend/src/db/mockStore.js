@@ -1,11 +1,11 @@
 /**
- * Active In-Memory Store & Mock Fallback
+ * Active In-Memory Store & Mock Fallback (Multi-User Scoped)
  *
- * Supports single-month OR multi-month range filtering (1m, 3m, 6m, 12m)!
+ * Supports single-month OR multi-month range filtering (1m, 3m, 6m, 12m)
+ * isolated by user_email!
  */
 
-let realTransactions = [];
-let isRealDataActive = false;
+const realTransactionsByUser = {};
 
 const DEMO_TRANSACTIONS = [];
 
@@ -81,7 +81,7 @@ const CATEGORY_MAP = {
   'Google Pay': 'Bills',
 };
 
-function inferCategory(merchant) {
+function autoCategorize(merchant) {
   if (!merchant) return 'Other';
   const mLower = merchant.toLowerCase();
   for (const [key, cat] of Object.entries(CATEGORY_MAP)) {
@@ -92,69 +92,80 @@ function inferCategory(merchant) {
   return 'Other';
 }
 
-function clearRealTransactions() {
-  realTransactions = [];
-  isRealDataActive = false;
-}
-
-function addRealParsedTransaction(tx) {
-  isRealDataActive = true;
-  const existingIdx = realTransactions.findIndex(
-    (t) => t.gmail_message_id === tx.gmail_message_id
-  );
-
-  const formattedTx = {
-    id: tx.id || `tx-real-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-    gmail_message_id: tx.gmail_message_id || `msg-${Date.now()}`,
-    amount: parseFloat(tx.amount),
-    merchant_raw: tx.merchant_raw || tx.merchant_normalized || 'Bank Transaction',
-    merchant_normalized: tx.merchant_normalized || 'Bank Merchant',
-    category: tx.category || inferCategory(tx.merchant_normalized),
-    transaction_type: tx.transaction_type || 'debit',
-    transaction_date: new Date(tx.transaction_date || Date.now()),
-    parse_confidence: tx.confidence || 0.9,
-    has_override: false,
-  };
-
-  if (existingIdx >= 0) {
-    realTransactions[existingIdx] = formattedTx;
+function clearRealTransactions(userEmail) {
+  if (userEmail) {
+    delete realTransactionsByUser[userEmail];
   } else {
-    realTransactions.push(formattedTx);
+    Object.keys(realTransactionsByUser).forEach((k) => delete realTransactionsByUser[k]);
   }
 }
 
-/**
- * Filter transactions by month string and rangeMonths count (1, 3, 6, 12).
- */
-function getStoreTransactions(month, rangeMonths = 1) {
-  const allTxs = isRealDataActive && realTransactions.length > 0 ? realTransactions : DEMO_TRANSACTIONS;
-  if (!month) return [...allTxs].sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
+function setRealTransactions(txs, userEmail = 'default_user@gmail.com') {
+  realTransactionsByUser[userEmail] = txs.map((t) => ({
+    ...t,
+    user_email: userEmail,
+    category: t.category || autoCategorize(t.merchant_normalized || t.merchant_raw),
+  }));
+}
+
+function addRealParsedTransaction(tx, userEmail = 'default_user@gmail.com') {
+  const email = userEmail || tx.user_email || 'default_user@gmail.com';
+  if (!realTransactionsByUser[email]) {
+    realTransactionsByUser[email] = [];
+  }
+  const enriched = {
+    ...tx,
+    user_email: email,
+    category: tx.category || autoCategorize(tx.merchant_normalized || tx.merchant_raw),
+  };
+  const existingIdx = realTransactionsByUser[email].findIndex((t) => t.gmail_message_id === tx.gmail_message_id);
+  if (existingIdx >= 0) {
+    realTransactionsByUser[email][existingIdx] = enriched;
+  } else {
+    realTransactionsByUser[email].push(enriched);
+  }
+}
+
+function getStoreTransactions(month, rangeMonths = 1, userEmail) {
+  let email = userEmail || require('../auth/google').getCurrentUserEmail();
+  if (!email && process.env.NODE_ENV === 'test') {
+    email = 'default_user@gmail.com';
+  }
+  if (!email || (email === 'default_user@gmail.com' && process.env.NODE_ENV !== 'test')) {
+    return [];
+  }
+  const userTxs = realTransactionsByUser[email] || [];
+  if (userTxs.length === 0) {
+    return [];
+  }
+
+  if (!month) return [...userTxs].sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
 
   const [year, mNum] = month.split('-').map(Number);
   const endLimit = new Date(year, mNum, 0, 23, 59, 59); // End of target month
   const startLimit = new Date(year, mNum - parseInt(rangeMonths || 1), 1, 0, 0, 0); // Start N months back
 
-  let filtered = allTxs.filter((t) => {
+  let filtered = userTxs.filter((t) => {
     const d = new Date(t.transaction_date);
     return d >= startLimit && d <= endLimit;
   });
 
-  if (filtered.length === 0 && allTxs.length > 0) {
-    filtered = allTxs;
+  if (filtered.length === 0 && userTxs.length > 0) {
+    filtered = userTxs;
   }
 
   return [...filtered].sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
 }
 
-function getLatestTransactionMonth() {
-  const txs = getStoreTransactions();
+function getLatestTransactionMonth(userEmail) {
+  const txs = getStoreTransactions(null, 1, userEmail);
   if (txs.length === 0) return `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
   const latestDate = new Date(txs[0].transaction_date);
   return `${latestDate.getFullYear()}-${String(latestDate.getMonth() + 1).padStart(2, '0')}`;
 }
 
-function getStoreCategories(month, rangeMonths = 1) {
-  const txs = getStoreTransactions(month, rangeMonths);
+function getStoreCategories(month, rangeMonths = 1, userEmail) {
+  const txs = getStoreTransactions(month, rangeMonths, userEmail);
 
   const totals = {};
   let grandTotal = 0;
@@ -174,8 +185,8 @@ function getStoreCategories(month, rangeMonths = 1) {
   })).sort((a, b) => b.amount - a.amount);
 }
 
-function getStoreMerchants(month, rangeMonths = 1) {
-  const txs = getStoreTransactions(month, rangeMonths);
+function getStoreMerchants(month, rangeMonths = 1, userEmail) {
+  const txs = getStoreTransactions(month, rangeMonths, userEmail);
 
   const totals = {};
   const counts = {};
@@ -195,8 +206,8 @@ function getStoreMerchants(month, rangeMonths = 1) {
   })).sort((a, b) => b.amount - a.amount);
 }
 
-function getStoreMonthlyTrend(rangeMonths = 12) {
-  const allTxs = isRealDataActive && realTransactions.length > 0 ? realTransactions : DEMO_TRANSACTIONS;
+function getStoreMonthlyTrend(rangeMonths = 12, userEmail) {
+  const allTxs = getStoreTransactions(null, 1, userEmail);
   const count = parseInt(rangeMonths || 12);
   const monthsMap = {};
 
@@ -214,14 +225,12 @@ function getStoreMonthlyTrend(rangeMonths = 12) {
     monthsMap[monthKey].transaction_count += 1;
   });
 
-  // Determine latest date in dataset or current date
   let latestDate = new Date();
   if (allTxs.length > 0) {
     const dates = allTxs.map((t) => new Date(t.transaction_date).getTime());
     latestDate = new Date(Math.max(...dates));
   }
 
-  // Generate contiguous sequence of `count` months ending at latestDate
   const result = [];
   for (let i = count - 1; i >= 0; i--) {
     const targetDate = new Date(latestDate.getFullYear(), latestDate.getMonth() - i, 1);
@@ -239,8 +248,8 @@ function getStoreMonthlyTrend(rangeMonths = 12) {
   return result;
 }
 
-function getStoreInsights(month, rangeMonths = 1) {
-  const txs = getStoreTransactions(month, rangeMonths);
+function getStoreInsights(month, rangeMonths = 1, userEmail) {
+  const txs = getStoreTransactions(month, rangeMonths, userEmail);
   const total = txs.reduce((acc, t) => acc + (t.transaction_type === 'debit' ? t.amount : 0), 0);
   const maxTx = txs.reduce((max, t) => (!max || t.amount > max.amount ? t : max), null);
 
@@ -264,12 +273,13 @@ function getStoreInsights(month, rangeMonths = 1) {
 module.exports = {
   DEMO_TRANSACTIONS,
   DEMO_SUBSCRIPTIONS: [],
-  DEMO_MONTHLY_TREND: getStoreMonthlyTrend(12),
-  DEMO_CATEGORIES: getStoreCategories(),
-  DEMO_MERCHANTS: getStoreMerchants(),
+  DEMO_MONTHLY_TREND: [],
+  DEMO_CATEGORIES: [],
+  DEMO_MERCHANTS: [],
   DEMO_ANOMALIES: [],
-  DEMO_INSIGHTS: getStoreInsights(),
+  DEMO_INSIGHTS: [],
   clearRealTransactions,
+  setRealTransactions,
   addRealParsedTransaction,
   getStoreTransactions,
   getLatestTransactionMonth,
@@ -277,5 +287,12 @@ module.exports = {
   getStoreMerchants,
   getStoreMonthlyTrend,
   getStoreInsights,
-  isUsingRealData: () => isRealDataActive,
+  isUsingRealData: (userEmail) => {
+    let email = userEmail || require('../auth/google').getCurrentUserEmail();
+    if (!email && process.env.NODE_ENV === 'test') {
+      email = 'default_user@gmail.com';
+    }
+    if (!email || (email === 'default_user@gmail.com' && process.env.NODE_ENV !== 'test')) return false;
+    return !!(realTransactionsByUser[email] && realTransactionsByUser[email].length > 0);
+  },
 };
