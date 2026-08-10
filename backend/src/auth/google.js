@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config');
@@ -49,6 +50,31 @@ function getAuthUrl(overrideRedirectUri, state) {
 }
 
 /**
+ * Fetch the authenticated user's email using the access token.
+ */
+async function getUserEmail(accessToken) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${accessToken}`,
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => (body += chunk));
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            resolve(data.email || null);
+          } catch (e) {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.end();
+  });
+}
+
+/**
  * Exchange authorization code for tokens and store refresh token.
  */
 async function handleCallback(code, overrideRedirectUri) {
@@ -65,12 +91,52 @@ async function handleCallback(code, overrideRedirectUri) {
     inMemoryRefreshToken = tokens.refresh_token;
   }
 
+  // Detect if the connected account changed
+  let accountChanged = false;
+  let userEmail = null;
+  try {
+    if (tokens.access_token) {
+      userEmail = await getUserEmail(tokens.access_token);
+    }
+    if (userEmail) {
+      // Check previously stored email
+      let previousEmail = null;
+      try {
+        const result = await query(
+          "SELECT token_value FROM auth_tokens WHERE token_type = 'connected_email'"
+        );
+        if (result.rows.length > 0) {
+          previousEmail = result.rows[0].token_value;
+        }
+      } catch (e) {}
+
+      if (previousEmail && previousEmail.toLowerCase() !== userEmail.toLowerCase()) {
+        accountChanged = true;
+        console.log(`[Auth] Account changed: ${previousEmail} → ${userEmail}`);
+      }
+
+      // Store current email
+      try {
+        await query(
+          `INSERT INTO auth_tokens (token_type, token_value, updated_at)
+           VALUES ('connected_email', $1, NOW())
+           ON CONFLICT (token_type)
+           DO UPDATE SET token_value = $1, updated_at = NOW()`,
+          [userEmail]
+        );
+      } catch (e) {}
+    }
+  } catch (e) {
+    console.warn('[Auth] Could not detect account change:', e.message);
+  }
+
   if (tokens.refresh_token || tokens.access_token || inMemoryRefreshToken) {
     try {
       fs.writeFileSync(TOKEN_FILE, JSON.stringify({
         google_refresh: inMemoryRefreshToken || tokens.refresh_token || null,
         google_access: tokens.access_token || null,
         google_expiry: tokens.expiry_date || null,
+        connected_email: userEmail || null,
         updated_at: new Date()
       }), 'utf8');
     } catch (e) {}
@@ -103,7 +169,7 @@ async function handleCallback(code, overrideRedirectUri) {
     }
   }
 
-  return tokens;
+  return { tokens, accountChanged, userEmail };
 }
 
 /**
@@ -189,4 +255,5 @@ module.exports = {
   handleCallback,
   getAuthenticatedClient,
   clearAuthToken,
+  getUserEmail,
 };
