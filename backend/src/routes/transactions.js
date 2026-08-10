@@ -1,5 +1,5 @@
 /**
- * Transactions API Routes
+ * Transactions API Routes — User Scoped
  */
 
 const express = require('express');
@@ -16,23 +16,22 @@ const VALID_CATEGORIES = [
 /**
  * GET /api/transactions
  * Paginated, filterable transaction list.
- *
- * Query params: page, limit, category, search, start_date, end_date, type
  */
 router.get('/', async (req, res) => {
   try {
+    const userEmail = req.userEmail;
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const offset = (page - 1) * limit;
 
-    let whereClause = 'WHERE 1=1';
-    const params = [];
-    let paramIndex = 1;
+    let whereClause = 'WHERE t.user_email = $1';
+    const params = [userEmail];
+    let paramIndex = 2;
 
     // Category filter
     if (req.query.category) {
       whereClause += ` AND COALESCE(
-        (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id),
+        (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id AND co.user_email = $1),
         t.category
       ) = $${paramIndex}`;
       params.push(req.query.category);
@@ -82,14 +81,14 @@ router.get('/', async (req, res) => {
         t.merchant_raw,
         t.merchant_normalized,
         COALESCE(
-          (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id),
+          (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id AND co.user_email = $1),
           t.category
         ) AS category,
         t.transaction_type,
         t.transaction_date,
         t.parse_confidence,
         t.created_at,
-        (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id) IS NOT NULL AS has_override
+        (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id AND co.user_email = $1) IS NOT NULL AS has_override
       FROM transactions t
       ${whereClause}
       ORDER BY t.transaction_date DESC
@@ -110,6 +109,7 @@ router.get('/', async (req, res) => {
       },
     });
   } catch (err) {
+    console.error('[Transactions] GET error:', err.message);
     res.json({
       data: [],
       pagination: { page: 1, limit: 20, total: 0, total_pages: 0 },
@@ -123,6 +123,7 @@ router.get('/', async (req, res) => {
  */
 router.patch('/:id/category', async (req, res) => {
   try {
+    const userEmail = req.userEmail;
     const { id } = req.params;
     const { category } = req.body;
 
@@ -132,13 +133,13 @@ router.patch('/:id/category', async (req, res) => {
       });
     }
 
-    // Verify transaction exists
-    const txn = await query('SELECT id FROM transactions WHERE id = $1', [id]);
+    // Verify transaction exists & belongs to user
+    const txn = await query('SELECT id FROM transactions WHERE id = $1 AND user_email = $2', [id, userEmail]);
     if (txn.rows.length === 0) {
       return res.status(404).json({ error: 'Transaction not found' });
     }
 
-    await setOverride(id, category);
+    await setOverride(id, category, userEmail);
 
     res.json({ message: 'Category updated', transaction_id: id, category });
   } catch (err) {
@@ -153,13 +154,14 @@ router.patch('/:id/category', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
   try {
+    const userEmail = req.userEmail;
     const { id } = req.params;
 
     const { rows } = await query(`
       SELECT
         t.*,
         COALESCE(
-          (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id),
+          (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id AND co.user_email = $2),
           t.category
         ) AS effective_category,
         re.sender AS email_sender,
@@ -167,9 +169,9 @@ router.get('/:id', async (req, res) => {
         re.body AS email_body,
         re.received_at AS email_received_at
       FROM transactions t
-      LEFT JOIN raw_emails re ON re.gmail_message_id = t.gmail_message_id
-      WHERE t.id = $1
-    `, [id]);
+      LEFT JOIN raw_emails re ON re.gmail_message_id = t.gmail_message_id AND re.user_email = t.user_email
+      WHERE t.id = $1 AND t.user_email = $2
+    `, [id, userEmail]);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Transaction not found' });

@@ -1,7 +1,7 @@
 const express = require('express');
 const { getAuthUrl, handleCallback, getAuthenticatedClient, clearAuthToken } = require('../auth/google');
-const { syncEmails } = require('../services/gmailIngestion');
-const mockStore = require('../db/mockStore');
+const { signSessionToken } = require('../middleware/auth');
+const { optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -38,7 +38,7 @@ router.get('/google', (req, res) => {
 
 /**
  * GET /auth/google/callback
- * Handles OAuth callback, exchanges code for tokens, runs automatic email sync, and redirects to dashboard.
+ * Handles OAuth callback, exchanges code for tokens, issues JWT session, redirects to frontend.
  */
 router.get('/google/callback', async (req, res) => {
   const { code, error, state } = req.query;
@@ -60,28 +60,13 @@ router.get('/google/callback', async (req, res) => {
 
   try {
     const redirectUri = getRequestRedirectUri(req);
-    const { tokens, accountChanged, userEmail } = await handleCallback(code, redirectUri);
+    const { tokens, userEmail } = await handleCallback(code, redirectUri);
 
-    // If a different Google account connected, wipe old user's data
-    if (accountChanged) {
-      console.log(`[Auth] Different account detected (${userEmail}). Wiping previous user data...`);
-      try {
-        const { query: dbQuery } = require('../db/pool');
-        // Order matters: respect foreign key constraints
-        await dbQuery('DELETE FROM category_overrides');
-        await dbQuery('DELETE FROM subscriptions');
-        await dbQuery('DELETE FROM transactions');
-        await dbQuery('DELETE FROM raw_emails');
-        await dbQuery('DELETE FROM merchant_profiles');
-        mockStore.clearRealTransactions();
-        console.log('[Auth] Previous user data cleared successfully.');
-      } catch (wipeErr) {
-        console.warn('[Auth] Could not wipe previous data:', wipeErr.message);
-      }
-    }
+    // Sign a JWT session token
+    const sessionToken = signSessionToken(userEmail);
 
-    console.log(`[Auth] Google OAuth succeeded (${userEmail || 'unknown'}) — redirecting to ${frontendUrl} for client-side sync...`);
-    res.redirect(`${frontendUrl}/?connected=true&autosync=true`);
+    console.log(`[Auth] Google OAuth succeeded for ${userEmail} — issuing JWT and redirecting...`);
+    res.redirect(`${frontendUrl}/?connected=true&autosync=true&token=${encodeURIComponent(sessionToken)}`);
   } catch (err) {
     console.error('[Auth] OAuth callback error:', err.message);
     res.redirect(`${frontendUrl}/?error=auth_failed`);
@@ -90,53 +75,42 @@ router.get('/google/callback', async (req, res) => {
 
 /**
  * GET /auth/status
- * Check if we have a valid OAuth token.
+ * Check if the current user has a valid OAuth token.
+ * Reads user identity from JWT (Authorization header).
  */
-router.get('/status', async (req, res) => {
+router.get('/status', optionalAuth, async (req, res) => {
   try {
-    const client = await getAuthenticatedClient();
-    let email = null;
-    try {
-      const { query: dbQuery } = require('../db/pool');
-      const result = await dbQuery(
-        "SELECT token_value FROM auth_tokens WHERE token_type = 'connected_email'"
-      );
-      if (result.rows.length > 0) email = result.rows[0].token_value;
-    } catch (e) {}
+    if (!req.userEmail) {
+      return res.json({
+        authenticated: false,
+        email: null,
+        message: 'Not authenticated. No session token.',
+      });
+    }
+
+    const client = await getAuthenticatedClient(req.userEmail);
     res.json({
       authenticated: !!client,
-      email: client ? email : null,
+      email: client ? req.userEmail : null,
       message: client
         ? 'Gmail access is configured'
         : 'Not authenticated. Visit /auth/google to authorize.',
     });
   } catch (err) {
-    res.json({ authenticated: false, message: err.message });
+    res.json({ authenticated: false, email: null, message: err.message });
   }
 });
 
 /**
  * POST /auth/logout
- * Disconnect current account and clear tokens.
+ * Disconnect current account and clear tokens for this user.
  */
-router.post('/logout', async (req, res) => {
+router.post('/logout', optionalAuth, async (req, res) => {
   try {
-    await clearAuthToken();
-    mockStore.clearRealTransactions();
-
-    // Wipe all user data so next account starts clean
-    try {
-      const { query: dbQuery } = require('../db/pool');
-      await dbQuery('DELETE FROM category_overrides');
-      await dbQuery('DELETE FROM subscriptions');
-      await dbQuery('DELETE FROM transactions');
-      await dbQuery('DELETE FROM raw_emails');
-      await dbQuery('DELETE FROM merchant_profiles');
-      console.log('[Auth] All user data cleared on disconnect.');
-    } catch (wipeErr) {
-      console.warn('[Auth] Could not wipe data on disconnect:', wipeErr.message);
+    if (req.userEmail) {
+      await clearAuthToken(req.userEmail);
+      console.log(`[Auth] User ${req.userEmail} disconnected.`);
     }
-
     res.json({ message: 'Account disconnected successfully' });
   } catch (err) {
     res.status(500).json({ error: 'Disconnect failed', details: err.message });

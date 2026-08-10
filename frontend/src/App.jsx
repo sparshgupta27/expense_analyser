@@ -7,7 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import Subscriptions from './pages/Subscriptions';
 import SignInWall from './components/SignInWall';
-import { getAuthStatus, triggerSync, disconnectAuth, API_URL } from './api/client';
+import { getAuthStatus, triggerSync, disconnectAuth, setSessionToken, clearSessionToken, API_URL } from './api/client';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -95,9 +95,13 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const justConnected = params.get('connected') === 'true';
     const needsAutoSync = params.get('autosync') === 'true';
+    const token = params.get('token');
+
+    if (token) {
+      setSessionToken(token);
+    }
 
     if (justConnected) {
-      localStorage.setItem('gmail_connected', 'true');
       setIsConnected(true);
       setAuthLoading(false);
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -130,25 +134,24 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
       setAuthLoading(false);
     } else {
-      // No URL params — check server auth status
+      // No URL params — check server auth status using session token
       getAuthStatus()
         .then((res) => {
           if (res?.authenticated) {
             setIsConnected(true);
-            localStorage.setItem('gmail_connected', 'true');
           } else {
+            clearSessionToken();
             setIsConnected(false);
-            localStorage.removeItem('gmail_connected');
           }
         })
         .catch(() => {
+          clearSessionToken();
           setIsConnected(false);
-          localStorage.removeItem('gmail_connected');
         })
         .finally(() => {
           setAuthLoading(false);
         });
-      return; // skip the final setAuthLoading below
+      return;
     }
   }, []);
 
@@ -203,7 +206,7 @@ export default function App() {
     try {
       await disconnectAuth();
     } catch (e) {}
-    localStorage.removeItem('gmail_connected');
+    clearSessionToken();
     setIsConnected(false);
     setDropdownOpen(false);
     setAuthBanner(null);

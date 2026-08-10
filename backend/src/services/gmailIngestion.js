@@ -3,7 +3,6 @@ const config = require('../config');
 const { query } = require('../db/pool');
 const { getAuthenticatedClient } = require('../auth/google');
 const { parse } = require('../parsers');
-const mockStore = require('../db/mockStore');
 
 function getErrorDetails(err) {
   return err?.response?.data?.error_description ||
@@ -153,22 +152,24 @@ function strictTransactionParser(subject, body, sender, emailDate) {
   };
 }
 
-async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, transaction }) {
+async function saveParsedTransaction({ userEmail, msg, sender, subject, body, receivedAt, transaction }) {
   await query(
-    `INSERT INTO raw_emails (gmail_message_id, sender, subject, body, received_at, processed)
-     VALUES ($1, $2, $3, $4, $5, true)
+    `INSERT INTO raw_emails (user_email, gmail_message_id, sender, subject, body, received_at, processed)
+     VALUES ($1, $2, $3, $4, $5, $6, true)
      ON CONFLICT (gmail_message_id)
      DO UPDATE SET
+       user_email = EXCLUDED.user_email,
        sender = EXCLUDED.sender,
        subject = EXCLUDED.subject,
        body = EXCLUDED.body,
        received_at = EXCLUDED.received_at,
        processed = true`,
-    [msg.id, sender, subject, body, receivedAt]
+    [userEmail, msg.id, sender, subject, body, receivedAt]
   );
 
   await query(
     `INSERT INTO transactions (
+       user_email,
        gmail_message_id,
        amount,
        merchant_raw,
@@ -178,9 +179,10 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
        transaction_date,
        parse_confidence
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (gmail_message_id)
      DO UPDATE SET
+       user_email = EXCLUDED.user_email,
        amount = EXCLUDED.amount,
        merchant_raw = EXCLUDED.merchant_raw,
        merchant_normalized = EXCLUDED.merchant_normalized,
@@ -189,6 +191,7 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
        transaction_date = EXCLUDED.transaction_date,
        parse_confidence = EXCLUDED.parse_confidence`,
     [
+      userEmail,
       msg.id,
       transaction.amount,
       transaction.merchant_raw,
@@ -202,15 +205,19 @@ async function saveParsedTransaction({ msg, sender, subject, body, receivedAt, t
 }
 
 /**
- * Main sync function — queries Gmail messages and parses into active transaction store.
- * Uses parallel batching for speed.
+ * Main sync function — queries Gmail messages for a specific user and saves into Postgres.
  */
-async function syncEmails() {
-  console.log('[Ingestion] Starting strict transaction email sync from Gmail...');
+async function syncEmails(userEmail) {
+  if (!userEmail) {
+    console.warn('[Ingestion] syncEmails called without userEmail');
+    return { fetched: 0, parsed: 0, status: 'unauthenticated' };
+  }
 
-  const auth = await getAuthenticatedClient();
+  console.log(`[Ingestion] Starting strict transaction email sync for ${userEmail}...`);
+
+  const auth = await getAuthenticatedClient(userEmail);
   if (!auth) {
-    console.warn('[Ingestion] Not authenticated with Google OAuth. User must authorize first.');
+    console.warn(`[Ingestion] Not authenticated for ${userEmail}. User must authorize first.`);
     return { fetched: 0, parsed: 0, status: 'unauthenticated' };
   }
 
@@ -238,15 +245,14 @@ async function syncEmails() {
       pageCount++;
     } while (pageToken && pageCount < MAX_PAGES);
 
-    console.log(`[Ingestion] Total ${allMessages.length} emails found for processing.`);
+    console.log(`[Ingestion] Total ${allMessages.length} emails found for ${userEmail}.`);
 
-    mockStore.clearRealTransactions();
     let parsedCount = 0;
     let savedCount = 0;
     let dbSaveErrors = 0;
     let latestTransactionDate = null;
 
-    // Process messages in parallel batches of 20 for high speed
+    // Process messages in parallel batches of 20
     const BATCH_SIZE = 20;
     for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
       const batch = allMessages.slice(i, i + BATCH_SIZE);
@@ -290,6 +296,7 @@ async function syncEmails() {
 
             try {
               await saveParsedTransaction({
+                userEmail,
                 msg,
                 sender,
                 subject,
@@ -311,7 +318,6 @@ async function syncEmails() {
 
       for (const result of results) {
         if (result.status === 'fulfilled' && result.value) {
-          mockStore.addRealParsedTransaction(result.value);
           parsedCount++;
           if (result.value.saved) {
             savedCount++;
@@ -333,7 +339,7 @@ async function syncEmails() {
       ? `${latestTransactionDate.getFullYear()}-${String(latestTransactionDate.getMonth() + 1).padStart(2, '0')}`
       : null;
 
-    console.log(`[Ingestion] Sync complete! Parsed ${parsedCount} clean transactions from Gmail. Saved ${savedCount} to Postgres.`);
+    console.log(`[Ingestion] Sync complete for ${userEmail}! Parsed ${parsedCount} transactions. Saved ${savedCount} to Postgres.`);
     return {
       fetched: allMessages.length,
       parsed: parsedCount,
@@ -345,7 +351,7 @@ async function syncEmails() {
 
   } catch (err) {
     const details = getErrorDetails(err);
-    console.error('[Ingestion] Error during Gmail API call:', details);
+    console.error(`[Ingestion] Error during Gmail API call for ${userEmail}:`, details);
     return { fetched: 0, parsed: 0, status: 'error', error: 'Gmail sync failed', details };
   }
 }

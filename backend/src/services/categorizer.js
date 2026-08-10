@@ -1,5 +1,5 @@
 /**
- * Transaction Categorizer
+ * Transaction Categorizer — User Scoped
  *
  * Categorization priority:
  * 1. Manual override (category_overrides table) — always wins
@@ -32,7 +32,7 @@ async function loadRules() {
 
   fuseIndex = new Fuse(cachedRules, {
     keys: ['pattern'],
-    threshold: 0.3,        // Levenshtein distance threshold
+    threshold: 0.3,
     includeScore: true,
     minMatchCharLength: 3,
   });
@@ -44,12 +44,12 @@ async function loadRules() {
 /**
  * Check for a manual category override for a transaction.
  */
-async function getOverride(transactionId) {
+async function getOverride(transactionId, userEmail) {
   if (!transactionId) return null;
 
   const result = await query(
-    'SELECT category FROM category_overrides WHERE transaction_id = $1',
-    [transactionId]
+    'SELECT category FROM category_overrides WHERE transaction_id = $1 AND (user_email = $2 OR user_email IS NULL)',
+    [transactionId, userEmail]
   );
 
   return result.rows.length > 0 ? result.rows[0].category : null;
@@ -59,12 +59,13 @@ async function getOverride(transactionId) {
  * Categorize a merchant name.
  * @param {string} merchantNormalized - The normalized merchant name
  * @param {string|null} transactionId - Optional transaction ID to check overrides
+ * @param {string|null} userEmail - User email
  * @returns {Promise<string>} The category
  */
-async function categorize(merchantNormalized, transactionId = null) {
+async function categorize(merchantNormalized, transactionId = null, userEmail = null) {
   // 1. Check manual override first
-  if (transactionId) {
-    const override = await getOverride(transactionId);
+  if (transactionId && userEmail) {
+    const override = await getOverride(transactionId, userEmail);
     if (override) return override;
   }
 
@@ -92,13 +93,13 @@ async function categorize(merchantNormalized, transactionId = null) {
 /**
  * Set a manual category override for a transaction.
  */
-async function setOverride(transactionId, category) {
+async function setOverride(transactionId, category, userEmail) {
   await query(
-    `INSERT INTO category_overrides (transaction_id, category, updated_at)
-     VALUES ($1, $2, NOW())
+    `INSERT INTO category_overrides (user_email, transaction_id, category, updated_at)
+     VALUES ($1, $2, $3, NOW())
      ON CONFLICT (transaction_id)
-     DO UPDATE SET category = $2, updated_at = NOW()`,
-    [transactionId, category]
+     DO UPDATE SET user_email = $1, category = $3, updated_at = NOW()`,
+    [userEmail, transactionId, category]
   );
 }
 

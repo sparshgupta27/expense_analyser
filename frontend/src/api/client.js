@@ -5,8 +5,30 @@ export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 const api = axios.create({
   baseURL: API_URL,
   timeout: 60000,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 });
+
+// Request interceptor: attach Authorization header
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('spendlens_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export const setSessionToken = (token) => {
+  if (token) {
+    localStorage.setItem('spendlens_token', token);
+  }
+};
+
+export const clearSessionToken = () => {
+  localStorage.removeItem('spendlens_token');
+};
+
+export const getStoredToken = () => localStorage.getItem('spendlens_token');
 
 // Dashboard
 export const getDashboardSummary = (month, range = 1) =>

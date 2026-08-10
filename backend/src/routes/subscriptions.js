@@ -1,5 +1,5 @@
 /**
- * Subscriptions API Routes
+ * Subscriptions API Routes — User Scoped
  */
 
 const express = require('express');
@@ -9,10 +9,11 @@ const router = express.Router();
 
 /**
  * GET /api/subscriptions
- * List all detected subscriptions with flags.
+ * List all detected subscriptions with flags for the current user.
  */
 router.get('/', async (req, res) => {
   try {
+    const userEmail = req.userEmail;
     const { rows } = await query(`
       SELECT
         s.id,
@@ -34,9 +35,10 @@ router.get('/', async (req, res) => {
           ELSE 'yearly'
         END AS frequency
       FROM subscriptions s
-      LEFT JOIN merchant_profiles mp ON mp.normalized_name = s.merchant_normalized
+      LEFT JOIN merchant_profiles mp ON mp.normalized_name = s.merchant_normalized AND mp.user_email = s.user_email
+      WHERE s.user_email = $1
       ORDER BY s.next_expected_date ASC
-    `);
+    `, [userEmail]);
 
     // Split into active, upcoming, ghost
     const now = new Date();
@@ -76,6 +78,7 @@ router.get('/', async (req, res) => {
       },
     });
   } catch (err) {
+    console.error('[Subscriptions] GET error:', err.message);
     res.json({
       subscriptions: [],
       summary: {
@@ -95,6 +98,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/upcoming', async (req, res) => {
   try {
+    const userEmail = req.userEmail;
     const { rows } = await query(`
       SELECT
         s.merchant_normalized,
@@ -108,11 +112,12 @@ router.get('/upcoming', async (req, res) => {
           ELSE 'yearly'
         END AS frequency
       FROM subscriptions s
-      LEFT JOIN merchant_profiles mp ON mp.normalized_name = s.merchant_normalized
-      WHERE s.next_expected_date <= NOW() + INTERVAL '7 days'
+      LEFT JOIN merchant_profiles mp ON mp.normalized_name = s.merchant_normalized AND mp.user_email = s.user_email
+      WHERE s.user_email = $1
+        AND s.next_expected_date <= NOW() + INTERVAL '7 days'
         AND s.ghost_flag = false
       ORDER BY s.next_expected_date ASC
-    `);
+    `, [userEmail]);
 
     res.json(rows.map((r) => ({
       ...r,

@@ -40,6 +40,11 @@ const config = {
     apiKey: process.env.ANTHROPIC_API_KEY,
   },
 
+  jwt: {
+    secret: process.env.JWT_SECRET || 'dev-fallback-secret-change-in-production',
+    expiresIn: '30d',
+  },
+
   // Sync config
   sync: {
     cronSchedule: '*/15 * * * *', // Every 15 minutes

@@ -1,9 +1,8 @@
 /**
- * Aggregation Job — Nightly
+ * Aggregation Job — Nightly / User-Scoped
  *
  * Precomputes dashboard aggregates from the transactions table
  * and stores them in Redis for fast dashboard reads.
- * Runs at 3 AM daily.
  */
 
 const Redis = require('ioredis');
@@ -21,9 +20,9 @@ async function getRedis() {
 }
 
 /**
- * Aggregate monthly spend trends (last 12 months).
+ * Aggregate monthly spend trends (last 12 months) for a user.
  */
-async function aggregateMonthlyTrend(redis) {
+async function aggregateMonthlyTrend(redis, userEmail) {
   const { rows } = await query(`
     SELECT
       TO_CHAR(transaction_date, 'YYYY-MM') AS month,
@@ -31,38 +30,38 @@ async function aggregateMonthlyTrend(redis) {
       SUM(CASE WHEN transaction_type = 'credit' THEN amount ELSE 0 END) AS total_credit,
       COUNT(*) AS transaction_count
     FROM transactions
-    WHERE transaction_date >= NOW() - INTERVAL '12 months'
+    WHERE user_email = $1
+      AND transaction_date >= NOW() - INTERVAL '12 months'
     GROUP BY TO_CHAR(transaction_date, 'YYYY-MM')
     ORDER BY month
-  `);
+  `, [userEmail]);
 
-  await redis.setex('dashboard:monthly-trend', CACHE_TTL, JSON.stringify(rows));
-  console.log(`[Aggregation] Monthly trend: ${rows.length} months cached`);
+  await redis.setex(`dashboard:${userEmail}:monthly-trend`, CACHE_TTL, JSON.stringify(rows));
+  console.log(`[Aggregation] Monthly trend for ${userEmail}: ${rows.length} months cached`);
   return rows;
 }
 
 /**
- * Aggregate category breakdown for a given month.
+ * Aggregate category breakdown for a user.
  */
-async function aggregateCategoryBreakdown(redis) {
-  // Get the last 3 months for comparison
+async function aggregateCategoryBreakdown(redis, userEmail) {
   const { rows } = await query(`
     SELECT
       TO_CHAR(transaction_date, 'YYYY-MM') AS month,
       COALESCE(
-        (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id),
+        (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id AND co.user_email = $1),
         t.category
       ) AS effective_category,
       SUM(amount) AS total_amount,
       COUNT(*) AS count
     FROM transactions t
-    WHERE transaction_type = 'debit'
-      AND transaction_date >= NOW() - INTERVAL '3 months'
+    WHERE t.user_email = $1
+      AND t.transaction_type = 'debit'
+      AND t.transaction_date >= NOW() - INTERVAL '3 months'
     GROUP BY TO_CHAR(transaction_date, 'YYYY-MM'), effective_category
     ORDER BY month DESC, total_amount DESC
-  `);
+  `, [userEmail]);
 
-  // Group by month
   const byMonth = {};
   for (const row of rows) {
     if (!byMonth[row.month]) byMonth[row.month] = [];
@@ -73,23 +72,22 @@ async function aggregateCategoryBreakdown(redis) {
     });
   }
 
-  // Add percentage within each month
   for (const [month, categories] of Object.entries(byMonth)) {
     const total = categories.reduce((s, c) => s + c.amount, 0);
     for (const cat of categories) {
       cat.percentage = total > 0 ? Math.round((cat.amount / total) * 100) : 0;
     }
-    await redis.setex(`dashboard:categories:${month}`, CACHE_TTL, JSON.stringify(categories));
+    await redis.setex(`dashboard:${userEmail}:categories:${month}`, CACHE_TTL, JSON.stringify(categories));
   }
 
-  console.log(`[Aggregation] Category breakdown: ${Object.keys(byMonth).length} months cached`);
+  console.log(`[Aggregation] Category breakdown for ${userEmail}: ${Object.keys(byMonth).length} months cached`);
   return byMonth;
 }
 
 /**
- * Aggregate top merchants.
+ * Aggregate top merchants for a user.
  */
-async function aggregateTopMerchants(redis) {
+async function aggregateTopMerchants(redis, userEmail) {
   const { rows } = await query(`
     SELECT
       TO_CHAR(transaction_date, 'YYYY-MM') AS month,
@@ -97,11 +95,12 @@ async function aggregateTopMerchants(redis) {
       SUM(amount) AS total_amount,
       COUNT(*) AS count
     FROM transactions
-    WHERE transaction_type = 'debit'
+    WHERE user_email = $1
+      AND transaction_type = 'debit'
       AND transaction_date >= NOW() - INTERVAL '3 months'
     GROUP BY TO_CHAR(transaction_date, 'YYYY-MM'), merchant_normalized
     ORDER BY month DESC, total_amount DESC
-  `);
+  `, [userEmail]);
 
   const byMonth = {};
   for (const row of rows) {
@@ -113,29 +112,29 @@ async function aggregateTopMerchants(redis) {
     });
   }
 
-  // Keep top 10 per month
   for (const [month, merchants] of Object.entries(byMonth)) {
     const top10 = merchants.slice(0, 10);
-    await redis.setex(`dashboard:merchants:${month}`, CACHE_TTL, JSON.stringify(top10));
+    await redis.setex(`dashboard:${userEmail}:merchants:${month}`, CACHE_TTL, JSON.stringify(top10));
   }
 
-  console.log(`[Aggregation] Top merchants: ${Object.keys(byMonth).length} months cached`);
+  console.log(`[Aggregation] Top merchants for ${userEmail}: ${Object.keys(byMonth).length} months cached`);
   return byMonth;
 }
 
 /**
- * Run all aggregation tasks.
+ * Run all aggregation tasks for a user.
  */
-async function runAggregation() {
-  console.log('[Aggregation] Starting nightly aggregation...');
+async function runAggregation(userEmail) {
+  if (!userEmail) return;
+  console.log(`[Aggregation] Starting aggregation for ${userEmail}...`);
   const redis = await getRedis();
   await redis.connect();
 
   try {
-    await aggregateMonthlyTrend(redis);
-    await aggregateCategoryBreakdown(redis);
-    await aggregateTopMerchants(redis);
-    console.log('[Aggregation] Complete');
+    await aggregateMonthlyTrend(redis, userEmail);
+    await aggregateCategoryBreakdown(redis, userEmail);
+    await aggregateTopMerchants(redis, userEmail);
+    console.log(`[Aggregation] Complete for ${userEmail}`);
   } finally {
     await redis.quit();
   }

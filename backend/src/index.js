@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const cron = require('node-cron');
 const config = require('./config');
 const { pool } = require('./db/pool');
@@ -11,6 +12,8 @@ const { processLlmBatch } = require('./jobs/llmBatchParser');
 const { runAggregation } = require('./jobs/aggregation');
 const { runSubscriptionDetection } = require('./jobs/subscriptionDetector');
 const { detectAnomalies } = require('./jobs/anomalyDetector');
+const { requireAuth, optionalAuth } = require('./middleware/auth');
+const { getAllAuthenticatedUsers } = require('./auth/google');
 
 const app = express();
 
@@ -31,6 +34,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+app.use(cookieParser());
 
 // ============================================================
 // Root endpoint
@@ -87,56 +91,62 @@ app.get('/health', async (req, res) => {
 // ============================================================
 // API routes
 // ============================================================
+// Auth routes — no requireAuth (need to work pre-login)
 app.use('/auth', require('./routes/auth'));
-app.use('/api/dashboard', require('./routes/dashboard'));
-app.use('/api/transactions', require('./routes/transactions'));
-app.use('/api/subscriptions', require('./routes/subscriptions'));
 
-// Manual sync trigger (Async Non-Blocking for instant response)
-app.post('/api/sync', (req, res) => {
-  syncEmails()
-    .then((result) => console.log('[API] Background sync completed:', result))
-    .catch((err) => console.error('[API] Background sync error:', err.message));
+// Protected API routes — require valid JWT
+app.use('/api/dashboard', requireAuth, require('./routes/dashboard'));
+app.use('/api/transactions', requireAuth, require('./routes/transactions'));
+app.use('/api/subscriptions', requireAuth, require('./routes/subscriptions'));
+
+// Manual sync trigger — user-scoped
+app.post('/api/sync', requireAuth, (req, res) => {
+  const userEmail = req.userEmail;
+  syncEmails(userEmail)
+    .then((result) => console.log(`[API] Sync completed for ${userEmail}:`, result))
+    .catch((err) => console.error(`[API] Sync error for ${userEmail}:`, err.message));
 
   res.json({ message: 'Gmail sync started in background', status: 'syncing' });
 });
 
-// Database reset endpoint (Wipes old test entries cleanly)
-app.post('/api/reset', async (req, res) => {
+// Database reset endpoint — user-scoped
+app.post('/api/reset', requireAuth, async (req, res) => {
+  const { query: dbQuery } = require('./db/pool');
   try {
-    await query('DELETE FROM transactions');
-    await query('DELETE FROM raw_emails');
-    await query('DELETE FROM subscriptions');
-    mockStore.clearRealTransactions();
-    console.log('[API] Database reset complete. All test transactions cleared.');
-    res.json({ message: 'Database reset successfully. 0 transactions remain.' });
+    await dbQuery('DELETE FROM category_overrides WHERE user_email = $1', [req.userEmail]);
+    await dbQuery('DELETE FROM subscriptions WHERE user_email = $1', [req.userEmail]);
+    await dbQuery('DELETE FROM transactions WHERE user_email = $1', [req.userEmail]);
+    await dbQuery('DELETE FROM raw_emails WHERE user_email = $1', [req.userEmail]);
+    await dbQuery('DELETE FROM merchant_profiles WHERE user_email = $1', [req.userEmail]);
+    console.log(`[API] Database reset for ${req.userEmail}`);
+    res.json({ message: 'Your data reset successfully.' });
   } catch (err) {
     console.error('[API] Reset error:', err.message);
     res.status(500).json({ error: 'Reset failed', details: err.message });
   }
 });
 
-app.post('/api/jobs/aggregate', async (req, res) => {
+app.post('/api/jobs/aggregate', requireAuth, async (req, res) => {
   try {
-    await runAggregation();
+    await runAggregation(req.userEmail);
     res.json({ message: 'Aggregation complete' });
   } catch (err) {
     res.status(500).json({ error: 'Aggregation failed', details: err.message });
   }
 });
 
-app.post('/api/jobs/detect-subscriptions', async (req, res) => {
+app.post('/api/jobs/detect-subscriptions', requireAuth, async (req, res) => {
   try {
-    const result = await runSubscriptionDetection();
+    const result = await runSubscriptionDetection(req.userEmail);
     res.json({ message: 'Subscription detection complete', ...result });
   } catch (err) {
     res.status(500).json({ error: 'Detection failed', details: err.message });
   }
 });
 
-app.post('/api/jobs/detect-anomalies', async (req, res) => {
+app.post('/api/jobs/detect-anomalies', requireAuth, async (req, res) => {
   try {
-    const result = await detectAnomalies();
+    const result = await detectAnomalies(req.userEmail);
     res.json({ message: 'Anomaly detection complete', anomalies: result });
   } catch (err) {
     res.status(500).json({ error: 'Detection failed', details: err.message });
@@ -170,7 +180,6 @@ async function start() {
       await seed();
     } catch (dbErr) {
       console.warn('[Server] Database connection unavailable:', dbErr.message);
-      console.warn('[Server] Starting API in Demo Mode (using in-memory fallback store)...');
     }
 
     // Start Kafka consumer if available
@@ -180,9 +189,18 @@ async function start() {
       // Kafka optional in standalone mode
     }
 
-    // Schedule cron jobs if DB available
+    // Schedule cron jobs — sync all authenticated users
     cron.schedule(config.sync.cronSchedule, async () => {
-      try { await syncEmails(); } catch (e) {}
+      try {
+        const users = await getAllAuthenticatedUsers();
+        for (const email of users) {
+          try {
+            await syncEmails(email);
+          } catch (e) {
+            console.error(`[Cron] Sync failed for ${email}:`, e.message);
+          }
+        }
+      } catch (e) {}
     });
 
     app.listen(config.port, () => {
