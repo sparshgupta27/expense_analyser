@@ -2,13 +2,13 @@
  * LLM Batch Parser — Nightly Job
  *
  * Processes raw emails that weren't matched by any regex parser.
- * Batches them and sends to Claude API for structured extraction.
- * Runs as a nightly cron job (2 AM) to keep costs and latency predictable.
+ * Now scoped per-user: accepts a userId UUID and only processes
+ * that user's unprocessed emails. Dedupe check is also user-scoped.
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
 const config = require('../config');
-const { query } = require('../db/pool');
+const { queryAsUser } = require('../db/pool');
 const { normalize } = require('../services/merchantNormalizer');
 const { categorize } = require('../services/categorizer');
 const { computeDedupeHash } = require('../services/parserService');
@@ -29,37 +29,45 @@ If the email is NOT a transaction email (it's marketing, newsletter, etc.), retu
 Return a JSON array with one entry per email, in the same order as provided. No markdown, no explanation — just the JSON array.`;
 
 /**
- * Process a batch of unmatched emails through Claude API.
+ * Process a batch of unmatched emails through Claude API for a specific user.
+ * @param {string} userId - UUID of the user to process
+ * @param {string} userEmail - Email for logging
  */
-async function processLlmBatch() {
+async function processLlmBatch(userId, userEmail = '') {
   if (!config.anthropic.apiKey) {
     console.log('[LLM Batch] No Anthropic API key configured, skipping');
     return { processed: 0, skipped: 0, errors: 0 };
   }
 
-  const anthropic = new Anthropic({ apiKey: config.anthropic.apiKey });
-
-  // Fetch unprocessed emails
-  const { rows: unprocessed } = await query(
-    `SELECT id, gmail_message_id, sender, subject, body
-     FROM raw_emails
-     WHERE processed = false
-     ORDER BY received_at ASC
-     LIMIT 100`
-  );
-
-  if (unprocessed.length === 0) {
-    console.log('[LLM Batch] No unprocessed emails to handle');
+  if (!userId) {
+    console.warn('[LLM Batch] processLlmBatch called without userId');
     return { processed: 0, skipped: 0, errors: 0 };
   }
 
-  console.log(`[LLM Batch] Processing ${unprocessed.length} unmatched emails`);
+  const anthropic = new Anthropic({ apiKey: config.anthropic.apiKey });
+
+  // Fetch this user's unprocessed emails only
+  const { rows: unprocessed } = await queryAsUser(userId,
+    `SELECT id, gmail_message_id, sender, subject, body, user_id
+     FROM raw_emails
+     WHERE processed = false
+       AND user_id = $1
+     ORDER BY received_at ASC
+     LIMIT 100`,
+    [userId]
+  );
+
+  if (unprocessed.length === 0) {
+    console.log(`[LLM Batch] No unprocessed emails for ${userEmail || userId}`);
+    return { processed: 0, skipped: 0, errors: 0 };
+  }
+
+  console.log(`[LLM Batch] Processing ${unprocessed.length} unmatched emails for ${userEmail || userId}`);
 
   let processed = 0;
   let skipped = 0;
   let errors = 0;
 
-  // Process in batches
   for (let i = 0; i < unprocessed.length; i += BATCH_SIZE) {
     const batch = unprocessed.slice(i, i + BATCH_SIZE);
 
@@ -89,7 +97,6 @@ async function processLlmBatch() {
       try {
         results = JSON.parse(responseText);
       } catch (parseErr) {
-        // Try to extract JSON from response
         const jsonMatch = responseText.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
           results = JSON.parse(jsonMatch[0]);
@@ -100,16 +107,15 @@ async function processLlmBatch() {
         }
       }
 
-      // Process each result
       for (let j = 0; j < batch.length; j++) {
         const email = batch[j];
         const result = results[j];
 
         if (!result || result === null) {
           // Not a transaction email — mark as processed
-          await query(
-            'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1',
-            [email.gmail_message_id]
+          await queryAsUser(userId,
+            'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1 AND user_id = $2',
+            [email.gmail_message_id, userId]
           );
           skipped++;
           continue;
@@ -127,28 +133,29 @@ async function processLlmBatch() {
             txnDate
           );
 
-          // Check for cross-email duplicate
-          const dupeCheck = await query(
-            'SELECT id FROM transactions WHERE dedupe_hash = $1',
-            [dedupeHash]
+          // Cross-email duplicate check — scoped to this user
+          const dupeCheck = await queryAsUser(userId,
+            'SELECT id FROM transactions WHERE dedupe_hash = $1 AND user_id = $2',
+            [dedupeHash, userId]
           );
 
           if (dupeCheck.rows.length > 0) {
-            await query(
-              'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1',
-              [email.gmail_message_id]
+            await queryAsUser(userId,
+              'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1 AND user_id = $2',
+              [email.gmail_message_id, userId]
             );
             skipped++;
             continue;
           }
 
-          await query(
+          await queryAsUser(userId,
             `INSERT INTO transactions
-               (gmail_message_id, amount, merchant_raw, merchant_normalized,
+               (user_id, gmail_message_id, amount, merchant_raw, merchant_normalized,
                 category, transaction_type, transaction_date, parse_confidence, dedupe_hash)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-             ON CONFLICT (gmail_message_id) DO NOTHING`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT (user_id, gmail_message_id) DO NOTHING`,
             [
+              userId,
               email.gmail_message_id,
               result.amount,
               result.merchant_raw,
@@ -161,9 +168,9 @@ async function processLlmBatch() {
             ]
           );
 
-          await query(
-            'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1',
-            [email.gmail_message_id]
+          await queryAsUser(userId,
+            'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1 AND user_id = $2',
+            [email.gmail_message_id, userId]
           );
 
           processed++;
@@ -184,7 +191,7 @@ async function processLlmBatch() {
     }
   }
 
-  console.log(`[LLM Batch] Complete. Processed: ${processed}, Skipped: ${skipped}, Errors: ${errors}`);
+  console.log(`[LLM Batch] Complete for ${userEmail || userId}. Processed: ${processed}, Skipped: ${skipped}, Errors: ${errors}`);
   return { processed, skipped, errors };
 }
 

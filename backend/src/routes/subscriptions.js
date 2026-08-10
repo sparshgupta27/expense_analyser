@@ -1,9 +1,9 @@
 /**
- * Subscriptions API Routes — User Scoped
+ * Subscriptions API Routes — User Scoped (UUID)
  */
 
 const express = require('express');
-const { query } = require('../db/pool');
+const { queryAsUser } = require('../db/pool');
 
 const router = express.Router();
 
@@ -13,8 +13,8 @@ const router = express.Router();
  */
 router.get('/', async (req, res) => {
   try {
-    const userEmail = req.userEmail;
-    const { rows } = await query(`
+    const { id: userId } = req.user;
+    const { rows } = await queryAsUser(userId, `
       SELECT
         s.id,
         s.merchant_normalized,
@@ -29,18 +29,19 @@ router.get('/', async (req, res) => {
         s.confidence,
         s.last_detected_at,
         CASE
-          WHEN s.interval_days <= 7 THEN 'weekly'
+          WHEN s.interval_days <= 7  THEN 'weekly'
           WHEN s.interval_days <= 31 THEN 'monthly'
           WHEN s.interval_days <= 92 THEN 'quarterly'
           ELSE 'yearly'
         END AS frequency
       FROM subscriptions s
-      LEFT JOIN merchant_profiles mp ON mp.normalized_name = s.merchant_normalized AND mp.user_email = s.user_email
-      WHERE s.user_email = $1
+      LEFT JOIN merchant_profiles mp
+        ON mp.normalized_name = s.merchant_normalized
+       AND mp.user_id = s.user_id
+      WHERE s.user_id = $1
       ORDER BY s.next_expected_date ASC
-    `, [userEmail]);
+    `, [userId]);
 
-    // Split into active, upcoming, ghost
     const now = new Date();
     const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
@@ -50,7 +51,6 @@ router.get('/', async (req, res) => {
     const ghosts = rows.filter((r) => r.ghost_flag);
     const active = rows.filter((r) => !r.ghost_flag);
 
-    // Calculate monthly total
     const monthlyTotal = active.reduce((sum, sub) => {
       const monthlyAmount = sub.interval_days <= 7
         ? sub.current_amount * 4
@@ -94,12 +94,12 @@ router.get('/', async (req, res) => {
 
 /**
  * GET /api/subscriptions/upcoming
- * Renewals in the next 7 days.
+ * Renewals in the next 7 days for the current user.
  */
 router.get('/upcoming', async (req, res) => {
   try {
-    const userEmail = req.userEmail;
-    const { rows } = await query(`
+    const { id: userId } = req.user;
+    const { rows } = await queryAsUser(userId, `
       SELECT
         s.merchant_normalized,
         mp.display_name,
@@ -107,17 +107,19 @@ router.get('/upcoming', async (req, res) => {
         s.next_expected_date,
         s.interval_days,
         CASE
-          WHEN s.interval_days <= 7 THEN 'weekly'
+          WHEN s.interval_days <= 7  THEN 'weekly'
           WHEN s.interval_days <= 31 THEN 'monthly'
           ELSE 'yearly'
         END AS frequency
       FROM subscriptions s
-      LEFT JOIN merchant_profiles mp ON mp.normalized_name = s.merchant_normalized AND mp.user_email = s.user_email
-      WHERE s.user_email = $1
+      LEFT JOIN merchant_profiles mp
+        ON mp.normalized_name = s.merchant_normalized
+       AND mp.user_id = s.user_id
+      WHERE s.user_id = $1
         AND s.next_expected_date <= NOW() + INTERVAL '7 days'
         AND s.ghost_flag = false
       ORDER BY s.next_expected_date ASC
-    `, [userEmail]);
+    `, [userId]);
 
     res.json(rows.map((r) => ({
       ...r,

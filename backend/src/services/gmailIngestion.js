@@ -1,6 +1,6 @@
 const { google } = require('googleapis');
 const config = require('../config');
-const { query } = require('../db/pool');
+const { queryAsUser } = require('../db/pool');
 const { getAuthenticatedClient } = require('../auth/google');
 const { parse } = require('../parsers');
 
@@ -64,7 +64,6 @@ function getHeader(headers, name) {
 function cleanMerchantName(sender, subject) {
   const text = `${sender || ''} ${subject || ''}`.toLowerCase();
 
-  // Full context matching across both sender and subject text
   if (text.includes('swiggy')) return 'Swiggy';
   if (text.includes('zomato')) return 'Zomato';
   if (text.includes('blinkit')) return 'Blinkit';
@@ -103,7 +102,7 @@ function cleanMerchantName(sender, subject) {
 const KNOWN_FINANCIAL_SENDERS = [
   'hdfcbank', 'icicibank', 'sbicard', 'sbi.co.in', 'axisbank', 'kotak', 'idfcfirstbank',
   'phonepe', 'paytm', 'googlepay', 'gpay', 'cred.club', 'razorpay', 'cashfree', 'billdesk',
-  'swiggy', 'zomato', 'uber', 'amazon', 'flipkart', 'blinkit', 'zepto', 'netflix', 'spotify', 'apple'
+  'swiggy', 'zomato', 'uber', 'amazon', 'flipkart', 'blinkit', 'zepto', 'netflix', 'spotify', 'apple',
 ];
 
 /**
@@ -113,16 +112,13 @@ function strictTransactionParser(subject, body, sender, emailDate) {
   const fullText = `${subject}\n${body}`;
   const senderLower = (sender || '').toLowerCase();
 
-  // 1. Instantly reject newsletters, competitions, promo deals, job alerts, webinars
   if (/prizes? worth|prize pool|opportunities for you|competitions|register now|win up to|rewards worth|cashback up to|newsletter|unsubscribe|discount|offer|coupon|deal of the day|job alert|hiring|webinar|course/i.test(fullText)) {
     return null;
   }
 
-  // 2. Require explicit financial payment verbs
   const hasPaymentVerb = /\b(?:debited|credited|paid|spent|transferred|order total|payment of|invoice|receipt)\b/i.test(fullText);
   if (!hasPaymentVerb) return null;
 
-  // 3. Require bank/card/account reference OR verified financial sender
   const isKnownSender = KNOWN_FINANCIAL_SENDERS.some((domain) => senderLower.includes(domain));
   const hasBankRef = /\b(?:a\/c|acc|account|card|upi|vpa|imps|neft|rtgs|ref\s*no|txn\s*id|order\s*id|invoice|receipt)\b/i.test(fullText);
 
@@ -130,7 +126,6 @@ function strictTransactionParser(subject, body, sender, emailDate) {
     return null;
   }
 
-  // 4. Extract amount tied to payment verbs or currency symbols
   const amountMatch = fullText.match(/(?:debited|credited|paid|spent|transferred|total|amount)\s*(?:by|for|of)?\s*(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
                       fullText.match(/(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d{1,2})?)\s*(?:debited|credited|paid|spent|transferred)/i);
 
@@ -152,45 +147,42 @@ function strictTransactionParser(subject, body, sender, emailDate) {
   };
 }
 
-async function saveParsedTransaction({ userEmail, msg, sender, subject, body, receivedAt, transaction }) {
-  await query(
-    `INSERT INTO raw_emails (user_email, gmail_message_id, sender, subject, body, received_at, processed)
-     VALUES ($1, $2, $3, $4, $5, $6, true)
-     ON CONFLICT (gmail_message_id)
+/**
+ * Save a parsed transaction for a user identified by UUID.
+ * Uses per-user unique constraint (user_id, gmail_message_id).
+ */
+async function saveParsedTransaction({ userId, userEmail, msg, sender, subject, body, receivedAt, transaction }) {
+  await queryAsUser(userId,
+    `INSERT INTO raw_emails (user_id, user_email, gmail_message_id, sender, subject, body, received_at, processed)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+     ON CONFLICT (user_id, gmail_message_id)
      DO UPDATE SET
-       user_email = EXCLUDED.user_email,
-       sender = EXCLUDED.sender,
-       subject = EXCLUDED.subject,
-       body = EXCLUDED.body,
+       sender     = EXCLUDED.sender,
+       subject    = EXCLUDED.subject,
+       body       = EXCLUDED.body,
        received_at = EXCLUDED.received_at,
-       processed = true`,
-    [userEmail, msg.id, sender, subject, body, receivedAt]
+       processed  = true`,
+    [userId, userEmail, msg.id, sender, subject, body, receivedAt]
   );
 
-  await query(
+  await queryAsUser(userId,
     `INSERT INTO transactions (
-       user_email,
-       gmail_message_id,
-       amount,
-       merchant_raw,
-       merchant_normalized,
-       category,
-       transaction_type,
-       transaction_date,
-       parse_confidence
+       user_id, user_email,
+       gmail_message_id, amount, merchant_raw, merchant_normalized,
+       category, transaction_type, transaction_date, parse_confidence
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT (gmail_message_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (user_id, gmail_message_id)
      DO UPDATE SET
-       user_email = EXCLUDED.user_email,
-       amount = EXCLUDED.amount,
-       merchant_raw = EXCLUDED.merchant_raw,
+       amount              = EXCLUDED.amount,
+       merchant_raw        = EXCLUDED.merchant_raw,
        merchant_normalized = EXCLUDED.merchant_normalized,
-       category = EXCLUDED.category,
-       transaction_type = EXCLUDED.transaction_type,
-       transaction_date = EXCLUDED.transaction_date,
-       parse_confidence = EXCLUDED.parse_confidence`,
+       category            = EXCLUDED.category,
+       transaction_type    = EXCLUDED.transaction_type,
+       transaction_date    = EXCLUDED.transaction_date,
+       parse_confidence    = EXCLUDED.parse_confidence`,
     [
+      userId,
       userEmail,
       msg.id,
       transaction.amount,
@@ -206,16 +198,18 @@ async function saveParsedTransaction({ userEmail, msg, sender, subject, body, re
 
 /**
  * Main sync function — queries Gmail messages for a specific user and saves into Postgres.
+ * @param {{ userId: string, userEmail: string }} user
  */
-async function syncEmails(userEmail) {
-  if (!userEmail) {
-    console.warn('[Ingestion] syncEmails called without userEmail');
+async function syncEmails({ userId, userEmail }) {
+  if (!userId || !userEmail) {
+    console.warn('[Ingestion] syncEmails called without userId/userEmail');
     return { fetched: 0, parsed: 0, status: 'unauthenticated' };
   }
 
-  console.log(`[Ingestion] Starting strict transaction email sync for ${userEmail}...`);
+  console.log(`[Ingestion] Starting strict transaction email sync for ${userEmail} (id=${userId})...`);
 
-  const auth = await getAuthenticatedClient(userEmail);
+  // getAuthenticatedClient now takes UUID
+  const auth = await getAuthenticatedClient(userId);
   if (!auth) {
     console.warn(`[Ingestion] Not authenticated for ${userEmail}. User must authorize first.`);
     return { fetched: 0, parsed: 0, status: 'unauthenticated' };
@@ -224,8 +218,8 @@ async function syncEmails(userEmail) {
   const gmail = google.gmail({ version: 'v1', auth });
 
   try {
-    let searchQuery = 'debited OR credited OR paid OR spent OR transferred OR UPI OR VPA OR HDFC OR SBI OR ICICI OR Axis OR Kotak OR Swiggy OR Zomato OR Amazon OR Flipkart OR Blinkit OR Zepto OR PhonePe OR Paytm OR GPay OR "Google Pay" OR "Bank Alert" OR "Order Confirmation" OR "Payment Received" OR "Payment Sent" OR invoice OR receipt OR statement';
-    
+    const searchQuery = 'debited OR credited OR paid OR spent OR transferred OR UPI OR VPA OR HDFC OR SBI OR ICICI OR Axis OR Kotak OR Swiggy OR Zomato OR Amazon OR Flipkart OR Blinkit OR Zepto OR PhonePe OR Paytm OR GPay OR "Google Pay" OR "Bank Alert" OR "Order Confirmation" OR "Payment Received" OR "Payment Sent" OR invoice OR receipt OR statement';
+
     let pageToken = null;
     const allMessages = [];
     const MAX_PAGES = 3;
@@ -252,7 +246,6 @@ async function syncEmails(userEmail) {
     let dbSaveErrors = 0;
     let latestTransactionDate = null;
 
-    // Process messages in parallel batches of 20
     const BATCH_SIZE = 20;
     for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
       const batch = allMessages.slice(i, i + BATCH_SIZE);
@@ -271,7 +264,6 @@ async function syncEmails(userEmail) {
           const receivedAt = dateStr ? new Date(dateStr) : new Date();
           const body = extractBody(msgDetail.data.payload) || msgDetail.data.snippet || '';
 
-          // Run registered parser or strict fallback parser
           let parsedResult = parse(sender, subject, body);
           if (!parsedResult) {
             parsedResult = strictTransactionParser(subject, body, sender, receivedAt);
@@ -296,6 +288,7 @@ async function syncEmails(userEmail) {
 
             try {
               await saveParsedTransaction({
+                userId,
                 userEmail,
                 msg,
                 sender,

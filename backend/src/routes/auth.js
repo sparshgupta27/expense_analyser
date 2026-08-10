@@ -1,7 +1,6 @@
 const express = require('express');
 const { getAuthUrl, handleCallback, getAuthenticatedClient, clearAuthToken } = require('../auth/google');
-const { signSessionToken } = require('../middleware/auth');
-const { optionalAuth } = require('../middleware/auth');
+const { signSessionToken, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -38,7 +37,8 @@ router.get('/google', (req, res) => {
 
 /**
  * GET /auth/google/callback
- * Handles OAuth callback, exchanges code for tokens, issues JWT session, redirects to frontend.
+ * Handles OAuth callback, exchanges code for tokens, upserts user,
+ * issues JWT session (sub = user UUID), redirects to frontend.
  */
 router.get('/google/callback', async (req, res) => {
   const { code, error, state } = req.query;
@@ -60,12 +60,13 @@ router.get('/google/callback', async (req, res) => {
 
   try {
     const redirectUri = getRequestRedirectUri(req);
-    const { tokens, userEmail } = await handleCallback(code, redirectUri);
+    // handleCallback now returns { user: { id, email } }
+    const { user } = await handleCallback(code, redirectUri);
 
-    // Sign a JWT session token
-    const sessionToken = signSessionToken(userEmail);
+    // Sign JWT with stable UUID as sub
+    const sessionToken = signSessionToken(user);
 
-    console.log(`[Auth] Google OAuth succeeded for ${userEmail} — issuing JWT and redirecting...`);
+    console.log(`[Auth] Google OAuth succeeded for ${user.email} (id=${user.id}) — issuing JWT`);
     res.redirect(`${frontendUrl}/?connected=true&autosync=true&token=${encodeURIComponent(sessionToken)}`);
   } catch (err) {
     console.error('[Auth] OAuth callback error:', err.message);
@@ -80,7 +81,7 @@ router.get('/google/callback', async (req, res) => {
  */
 router.get('/status', optionalAuth, async (req, res) => {
   try {
-    if (!req.userEmail) {
+    if (!req.user) {
       return res.json({
         authenticated: false,
         email: null,
@@ -88,10 +89,10 @@ router.get('/status', optionalAuth, async (req, res) => {
       });
     }
 
-    const client = await getAuthenticatedClient(req.userEmail);
+    const client = await getAuthenticatedClient(req.user.id);
     res.json({
       authenticated: !!client,
-      email: client ? req.userEmail : null,
+      email: client ? req.user.email : null,
       message: client
         ? 'Gmail access is configured'
         : 'Not authenticated. Visit /auth/google to authorize.',
@@ -107,9 +108,9 @@ router.get('/status', optionalAuth, async (req, res) => {
  */
 router.post('/logout', optionalAuth, async (req, res) => {
   try {
-    if (req.userEmail) {
-      await clearAuthToken(req.userEmail);
-      console.log(`[Auth] User ${req.userEmail} disconnected.`);
+    if (req.user) {
+      await clearAuthToken(req.user.id);
+      console.log(`[Auth] User ${req.user.email} (id=${req.user.id}) disconnected.`);
     }
     res.json({ message: 'Account disconnected successfully' });
   } catch (err) {

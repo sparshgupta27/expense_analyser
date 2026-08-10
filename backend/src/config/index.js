@@ -45,6 +45,11 @@ const config = {
     expiresIn: '30d',
   },
 
+  // AES-256-GCM token encryption key (64 hex chars = 32 bytes)
+  encryption: {
+    tokenKey: process.env.TOKEN_ENCRYPTION_KEY || '',
+  },
+
   // Sync config
   sync: {
     cronSchedule: '*/15 * * * *', // Every 15 minutes

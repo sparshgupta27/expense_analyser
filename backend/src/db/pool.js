@@ -57,4 +57,38 @@ async function getClient() {
   return pool.connect();
 }
 
-module.exports = { pool, query, getClient };
+/**
+ * Execute a query scoped to a specific user via Postgres RLS.
+ *
+ * Sets SET LOCAL app.current_user_id = '<userId>' within a transaction
+ * so the RLS policy "user_id = current_setting('app.current_user_id')::uuid"
+ * is honoured for every user-owned table.
+ *
+ * @param {string} userId - UUID of the authenticated user
+ * @param {string} text   - SQL query
+ * @param {Array}  params - Query parameters
+ * @returns {Promise<import('pg').QueryResult>}
+ */
+async function queryAsUser(userId, text, params) {
+  if (!userId) {
+    // Fall back to unscoped query (e.g. cron bootstrap, migrations)
+    return query(text, params);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // SET LOCAL is transaction-scoped — cleared automatically on COMMIT/ROLLBACK
+    await client.query(`SET LOCAL app.current_user_id = '${userId}'`);
+    const result = await client.query(text, params);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { pool, query, queryAsUser, getClient };

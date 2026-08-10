@@ -4,11 +4,13 @@
  * Consumes messages from "raw-emails" topic, runs them through the
  * parser registry, normalizes merchant names, categorizes, computes
  * dedupe hash, and inserts into the transactions table.
+ *
+ * Kafka messages must include user_id (UUID) for proper tenant isolation.
  */
 
 const crypto = require('crypto');
 const config = require('../config');
-const { query } = require('../db/pool');
+const { queryAsUser } = require('../db/pool');
 const { consumer, connectConsumer } = require('./kafka');
 const { parse } = require('../parsers');
 const { normalize } = require('./merchantNormalizer');
@@ -32,30 +34,40 @@ function computeDedupeHash(amount, merchantNormalized, transactionDate) {
 
 /**
  * Upsert merchant profile — update stats on every new transaction.
+ * @param {string} userId - UUID
+ * @param {string} merchantNormalized
+ * @param {number} amount
+ * @param {string} category
  */
-async function upsertMerchantProfile(merchantNormalized, amount, category) {
-  await query(
+async function upsertMerchantProfile(userId, merchantNormalized, amount, category) {
+  await queryAsUser(userId,
     `INSERT INTO merchant_profiles
-       (normalized_name, display_name, category, avg_transaction_amount,
+       (user_id, normalized_name, display_name, category, avg_transaction_amount,
         transaction_count, first_seen_at, last_seen_at)
-     VALUES ($1, $1, $2, $3, 1, NOW(), NOW())
-     ON CONFLICT (normalized_name) DO UPDATE SET
-       category = COALESCE(NULLIF(merchant_profiles.category, 'Other'), $2),
+     VALUES ($1, $2, $2, $3, $4, 1, NOW(), NOW())
+     ON CONFLICT (user_id, normalized_name) DO UPDATE SET
+       category = COALESCE(NULLIF(merchant_profiles.category, 'Other'), $3),
        avg_transaction_amount = (
-         (merchant_profiles.avg_transaction_amount * merchant_profiles.transaction_count + $3)
+         (merchant_profiles.avg_transaction_amount * merchant_profiles.transaction_count + $4)
          / (merchant_profiles.transaction_count + 1)
        ),
        transaction_count = merchant_profiles.transaction_count + 1,
        last_seen_at = NOW()`,
-    [merchantNormalized, category, amount]
+    [userId, merchantNormalized, category, amount]
   );
 }
 
 /**
  * Process a single email message from Kafka.
+ * Message data must include user_id and gmail_message_id.
  */
 async function processMessage(messageData) {
-  const { gmail_message_id, sender, subject, body } = messageData;
+  const { user_id: userId, gmail_message_id, sender, subject, body } = messageData;
+
+  if (!userId) {
+    console.warn(`[ParserService] Kafka message missing user_id for ${gmail_message_id} — skipping`);
+    return { status: 'error', gmail_message_id, error: 'Missing user_id in Kafka message' };
+  }
 
   // Run through parser registry
   const parseResult = parse(sender, subject, body);
@@ -71,7 +83,6 @@ async function processMessage(messageData) {
     merchant_raw,
     transaction_type,
     transaction_date,
-    account_last4,
     confidence,
     parser,
   } = parseResult;
@@ -85,10 +96,10 @@ async function processMessage(messageData) {
   // Compute dedupe hash
   const dedupeHash = computeDedupeHash(amount, merchantNormalized, transaction_date);
 
-  // Check for cross-email duplicate (same transaction from bank alert + merchant email)
-  const dupeCheck = await query(
-    `SELECT id FROM transactions WHERE dedupe_hash = $1 AND gmail_message_id != $2`,
-    [dedupeHash, gmail_message_id]
+  // Cross-email duplicate check — scoped to this user
+  const dupeCheck = await queryAsUser(userId,
+    `SELECT id FROM transactions WHERE dedupe_hash = $1 AND gmail_message_id != $2 AND user_id = $3`,
+    [dedupeHash, gmail_message_id, userId]
   );
 
   if (dupeCheck.rows.length > 0) {
@@ -96,35 +107,34 @@ async function processMessage(messageData) {
       `[ParserService] Cross-email duplicate detected for ${gmail_message_id} ` +
       `(matches transaction ${dupeCheck.rows[0].id})`
     );
-    // Still mark raw email as processed
-    await query(
-      'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1',
-      [gmail_message_id]
+    await queryAsUser(userId,
+      'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1 AND user_id = $2',
+      [gmail_message_id, userId]
     );
     return { status: 'duplicate', gmail_message_id };
   }
 
-  // Insert transaction (idempotent via ON CONFLICT)
+  // Insert transaction (idempotent via ON CONFLICT on user_id + gmail_message_id)
   try {
-    await query(
+    await queryAsUser(userId,
       `INSERT INTO transactions
-         (gmail_message_id, amount, merchant_raw, merchant_normalized, category,
+         (user_id, gmail_message_id, amount, merchant_raw, merchant_normalized, category,
           transaction_type, transaction_date, parse_confidence, dedupe_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT (gmail_message_id) DO NOTHING`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (user_id, gmail_message_id) DO NOTHING`,
       [
-        gmail_message_id, amount, merchant_raw, merchantNormalized, category,
+        userId, gmail_message_id, amount, merchant_raw, merchantNormalized, category,
         transaction_type, transaction_date, confidence, dedupeHash,
       ]
     );
 
-    // Update merchant profile
-    await upsertMerchantProfile(merchantNormalized, amount, category);
+    // Update merchant profile for this user
+    await upsertMerchantProfile(userId, merchantNormalized, amount, category);
 
     // Mark raw email as processed
-    await query(
-      'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1',
-      [gmail_message_id]
+    await queryAsUser(userId,
+      'UPDATE raw_emails SET processed = true WHERE gmail_message_id = $1 AND user_id = $2',
+      [gmail_message_id, userId]
     );
 
     console.log(
