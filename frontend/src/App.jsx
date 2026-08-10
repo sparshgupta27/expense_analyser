@@ -6,6 +6,7 @@ import {
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import Subscriptions from './pages/Subscriptions';
+import SignInWall from './components/SignInWall';
 import { getAuthStatus, triggerSync, disconnectAuth, API_URL } from './api/client';
 
 class ErrorBoundary extends React.Component {
@@ -76,6 +77,7 @@ export default function App() {
   const [timeRange, setTimeRange] = useState(1);
   const [authBanner, setAuthBanner] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncOverlay, setSyncOverlay] = useState(false);
@@ -97,6 +99,7 @@ export default function App() {
     if (justConnected) {
       localStorage.setItem('gmail_connected', 'true');
       setIsConnected(true);
+      setAuthLoading(false);
       window.history.replaceState({}, document.title, window.location.pathname);
 
       if (needsAutoSync) {
@@ -125,21 +128,28 @@ export default function App() {
     } else if (params.get('error')) {
       setAuthBanner('Authorization was cancelled or failed.');
       window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (localStorage.getItem('gmail_connected') === 'true') {
-      setIsConnected(true);
-    }
-
-    getAuthStatus()
-      .then((res) => {
-        if (res?.authenticated) {
-          setIsConnected(true);
-          localStorage.setItem('gmail_connected', 'true');
-        } else {
+      setAuthLoading(false);
+    } else {
+      // No URL params — check server auth status
+      getAuthStatus()
+        .then((res) => {
+          if (res?.authenticated) {
+            setIsConnected(true);
+            localStorage.setItem('gmail_connected', 'true');
+          } else {
+            setIsConnected(false);
+            localStorage.removeItem('gmail_connected');
+          }
+        })
+        .catch(() => {
           setIsConnected(false);
           localStorage.removeItem('gmail_connected');
-        }
-      })
-      .catch(() => {});
+        })
+        .finally(() => {
+          setAuthLoading(false);
+        });
+      return; // skip the final setAuthLoading below
+    }
   }, []);
 
   useEffect(() => {
@@ -196,8 +206,7 @@ export default function App() {
     localStorage.removeItem('gmail_connected');
     setIsConnected(false);
     setDropdownOpen(false);
-    setAuthBanner('Account disconnected.');
-    window.location.reload();
+    setAuthBanner(null);
   };
 
   const renderPage = () => {
@@ -212,6 +221,23 @@ export default function App() {
         return <Dashboard month={selectedMonth} range={timeRange} />;
     }
   };
+
+  // ── Auth gate: loading spinner ──
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#FAF8F3] flex flex-col items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-[#E8E3D8] border-t-[#2D5C4E] rounded-full animate-spin" />
+          <p className="text-sm text-[#6C6A65] font-medium">Loading SpendLens…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Auth gate: sign-in wall ──
+  if (!isConnected) {
+    return <SignInWall apiUrl={API_URL} />;
+  }
 
   return (
     <ErrorBoundary>
