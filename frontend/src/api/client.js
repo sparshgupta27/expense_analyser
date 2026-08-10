@@ -10,8 +10,11 @@ const api = axios.create({
 });
 
 // Request interceptor: attach Authorization header
+// NOTE: sessionStorage is intentionally used here (not localStorage) so that
+// each browser tab/window has its own isolated session. This prevents a new
+// tab from inheriting a previously-logged-in user's token.
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('spendlens_token');
+  const token = sessionStorage.getItem('spendlens_token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -20,15 +23,15 @@ api.interceptors.request.use((config) => {
 
 export const setSessionToken = (token) => {
   if (token) {
-    localStorage.setItem('spendlens_token', token);
+    sessionStorage.setItem('spendlens_token', token);
   }
 };
 
 export const clearSessionToken = () => {
-  localStorage.removeItem('spendlens_token');
+  sessionStorage.removeItem('spendlens_token');
 };
 
-export const getStoredToken = () => localStorage.getItem('spendlens_token');
+export const getStoredToken = () => sessionStorage.getItem('spendlens_token');
 
 // Dashboard
 export const getDashboardSummary = (month, range = 1) =>
