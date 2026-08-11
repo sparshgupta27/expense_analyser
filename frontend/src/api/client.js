@@ -83,8 +83,10 @@ api.interceptors.response.use(
         clearSessionToken();
         // Softly clear URL params and let React re-render
         window.history.replaceState({}, document.title, '/');
-        // Dispatch a custom event so App.jsx can respond
-        window.dispatchEvent(new Event('spendlens:401'));
+        // Dispatch a custom event so App.jsx can respond with details
+        window.dispatchEvent(new CustomEvent('spendlens:401', { 
+          detail: { url: error.config.url, response: error.response.data } 
+        }));
       }
     }
     return Promise.reject(error);

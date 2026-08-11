@@ -100,10 +100,15 @@ export default function App() {
   const dropdownRef = useRef(null);
 
   useEffect(() => {
-    const handleUnauthorized = () => {
+    const handleUnauthorized = (e) => {
       setIsConnected(false);
       setCurrentUser(null);
-      setAuthBanner('Session expired or invalid. Please reconnect.');
+      
+      let errorMsg = 'Session expired or invalid.';
+      if (e && e.detail) {
+        errorMsg = `401 from ${e.detail.url}: ${JSON.stringify(e.detail.response)}`;
+      }
+      setAuthBanner(errorMsg);
     };
     window.addEventListener('spendlens:401', handleUnauthorized);
     return () => window.removeEventListener('spendlens:401', handleUnauthorized);
