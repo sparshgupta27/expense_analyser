@@ -126,7 +126,7 @@ export const getUpcomingRenewals = () =>
 
 // ── Auth & Sync ───────────────────────────────────────────────────────────────
 export const getAuthStatus = () =>
-  api.get('/auth/status').then((r) => r.data);
+  api.get('/auth/status', { timeout: 10000 }).then((r) => r.data);
 
 export const triggerSync = () =>
   api.post('/api/sync', {}, { timeout: 120000 }).then((r) => r.data);
