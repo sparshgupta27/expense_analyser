@@ -100,6 +100,16 @@ export default function App() {
   const dropdownRef = useRef(null);
 
   useEffect(() => {
+    const handleUnauthorized = () => {
+      setIsConnected(false);
+      setCurrentUser(null);
+      setAuthBanner('Session expired or invalid. Please reconnect.');
+    };
+    window.addEventListener('spendlens:401', handleUnauthorized);
+    return () => window.removeEventListener('spendlens:401', handleUnauthorized);
+  }, []);
+
+  useEffect(() => {
     if (window.location.pathname === '/auth/google/callback') {
       const callbackUrl = new URL(`${API_URL}/auth/google/callback`);
       callbackUrl.search = window.location.search;

@@ -66,13 +66,14 @@ api.interceptors.request.use((config) => {
   const token = getStoredToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+    config.headers['X-Authorization'] = `Bearer ${token}`; // Bypass IIS dropping header
   }
   return config;
 });
 
 // ── Response interceptor: handle 401 globally ────────────────────────────────
 // If any API call returns 401 (expired/invalid JWT), clear the session and
-// reload so the sign-in wall is shown. This catches token expiry mid-session.
+// trigger a state update instead of a hard reload, to preserve debugging.
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -80,8 +81,10 @@ api.interceptors.response.use(
       const isAuthStatusCheck = error?.config?.url?.includes('/auth/status');
       if (!isAuthStatusCheck) {
         clearSessionToken();
-        // Soft reload — lets App.jsx re-evaluate auth state
-        window.location.reload();
+        // Softly clear URL params and let React re-render
+        window.history.replaceState({}, document.title, '/');
+        // Dispatch a custom event so App.jsx can respond
+        window.dispatchEvent(new Event('spendlens:401'));
       }
     }
     return Promise.reject(error);

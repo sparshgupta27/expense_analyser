@@ -40,7 +40,7 @@ function verifyToken(token) {
  * Extract Bearer token from Authorization header or cookie fallback.
  */
 function extractToken(req) {
-  const authHeader = req.headers.authorization;
+  const authHeader = req.headers.authorization || req.headers['x-authorization'];
   if (authHeader && authHeader.startsWith('Bearer ')) {
     return authHeader.slice(7);
   }
