@@ -18,13 +18,13 @@ const { auditLog } = require('./utils/audit');
 
 const app = express();
 
-// Middleware (Permissive CORS for Vercel & Render)
+// Middleware (Permissive CORS for Vercel & Azure)
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (
       origin.includes('vercel.app') ||
-      origin.includes('onrender.com') ||
+      origin.includes('azurewebsites.net') ||
       origin.includes('localhost') ||
       origin.includes('127.0.0.1')
     ) {

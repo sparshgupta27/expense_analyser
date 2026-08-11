@@ -128,17 +128,29 @@ Services started:
 
 ---
 
-### Option C: Cloud Deployment via Render Blueprint
+### Option C: Cloud Deployment (Azure + Vercel)
 
-Deploy the entire stack (Backend + Managed Postgres + Static Frontend) with a single click using the included [`render.yaml`](file:///c:/Users/Lenovo/OneDrive/Documents/Desktop/expense_analyser/render.yaml):
+Deploy the backend on **Azure App Service** and the frontend on **Vercel**:
 
-1. Push your repository to GitHub / GitLab.
-2. Go to [Render Dashboard](https://dashboard.render.com/) -> **New** -> **Blueprints**.
-3. Connect your repository. Render will automatically detect `render.yaml` and provision:
-   - **Node Web Service**: `expense-analyzer-backend`
-   - **PostgreSQL Database**: `expense-postgres`
-   - **Static Site**: `expense-analyzer-frontend`
-4. Input your secret environment variables when prompted (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, etc.).
+#### Backend (Azure App Service)
+
+1. Create a Node.js App Service on Azure (Linux, Free/B1 tier).
+2. Connect your GitHub repository for CI/CD.
+3. Set the following **Application Settings** in Azure Portal → Configuration:
+   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_REDIRECT_URI` = `https://<your-azure-domain>/auth/google/callback`
+   - `FRONTEND_URL` = `https://<your-vercel-domain>`
+   - `DATABASE_URL` = your Neon/Postgres connection string
+   - `JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`
+   - `NODE_ENV` = `production`
+4. Update [Google Cloud Console](https://console.cloud.google.com/apis/credentials) Authorized Redirect URIs to point to Azure.
+
+#### Frontend (Vercel)
+
+1. Import your repository on [Vercel](https://vercel.com).
+2. Set the **Root Directory** to `frontend`.
+3. Add environment variable: `VITE_API_URL` = `https://<your-azure-domain>`
+4. Deploy. Vercel will auto-detect Vite and build the frontend.
 
 ---
 
