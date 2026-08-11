@@ -9,7 +9,7 @@ import Transactions from './pages/Transactions';
 import Subscriptions from './pages/Subscriptions';
 import SignInWall from './components/SignInWall';
 import {
-  getAuthStatus, triggerSync, disconnectAuth, resetAllData,
+  getAuthStatus, triggerSync, disconnectAuth, resetAllData, signInAsGuest,
   setSessionToken, clearSessionToken, storeUserFromToken, getStoredUser,
   API_URL
 } from './api/client';
@@ -270,6 +270,26 @@ export default function App() {
     }
   };
 
+  const handleGuestLogin = async () => {
+    setAuthLoading(true);
+    try {
+      const res = await signInAsGuest();
+      if (res.token) {
+        setSessionToken(res.token);
+        const user = storeUserFromToken(res.token);
+        setCurrentUser(user);
+        setIsConnected(true);
+        setAuthBanner('Logged in as Demo Guest. Mock data loaded!');
+        setRefreshNonce((n) => n + 1); // trigger refresh
+      }
+    } catch (err) {
+      console.error(err);
+      setAuthBanner('Failed to enter Guest Mode.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const renderPage = () => {
     switch (activePage) {
       case 'dashboard':
@@ -297,7 +317,7 @@ export default function App() {
 
   // ── Auth gate: sign-in wall ──
   if (!isConnected) {
-    return <SignInWall apiUrl={API_URL} />;
+    return <SignInWall apiUrl={API_URL} onGuestLogin={handleGuestLogin} />;
   }
 
   const userInitials = getInitials(currentUser?.email || '');

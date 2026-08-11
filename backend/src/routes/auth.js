@@ -131,4 +131,27 @@ router.post('/logout', optionalAuth, async (req, res) => {
   }
 });
 
+const { seedGuestData } = require('../db/seed');
+
+/**
+ * POST /auth/guest
+ * Generates a session token for the demo/guest user to bypass Gmail OAuth.
+ */
+router.post('/guest', async (req, res) => {
+  const guestUser = {
+    id: '00000000-0000-0000-0000-000000000000', // Mock UUID for guest
+    email: 'guest@spendlens.demo',
+  };
+  
+  try {
+    await seedGuestData(guestUser.id);
+  } catch (err) {
+    console.error('[Auth] Failed to seed guest data:', err);
+  }
+
+  const sessionToken = signSessionToken(guestUser);
+  console.log(`[Auth] Issued Guest JWT for ${guestUser.email}`);
+  res.json({ token: sessionToken, user: guestUser });
+});
+
 module.exports = router;

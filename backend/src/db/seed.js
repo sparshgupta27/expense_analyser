@@ -92,4 +92,29 @@ if (require.main === module) {
     });
 }
 
-module.exports = { seed };
+async function seedGuestData(guestUserId) {
+  const { rowCount } = await query('SELECT 1 FROM transactions WHERE user_id = $1 LIMIT 1', [guestUserId]);
+  if (rowCount > 0) return; // Already seeded
+
+  console.log(`[Seed] Seeding mock data for guest user ${guestUserId}`);
+  const now = new Date();
+  
+  const mockTransactions = [
+    { merchant: 'Swiggy', amount: 450, category: 'Food', date: new Date(now.getTime() - 2 * 86400000) },
+    { merchant: 'Amazon', amount: 1299, category: 'Shopping', date: new Date(now.getTime() - 5 * 86400000) },
+    { merchant: 'Uber', amount: 350, category: 'Transport', date: new Date(now.getTime() - 1 * 86400000) },
+    { merchant: 'Netflix', amount: 199, category: 'Entertainment', date: new Date(now.getTime() - 15 * 86400000) },
+    { merchant: 'Airtel', amount: 799, category: 'Bills', date: new Date(now.getTime() - 10 * 86400000) },
+    { merchant: 'Zomato', amount: 820, category: 'Food', date: new Date(now.getTime() - 8 * 86400000) },
+  ];
+
+  for (const t of mockTransactions) {
+    await query(
+      `INSERT INTO transactions (id, user_id, amount, merchant, category, date, type, raw_email_id) 
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'debit', null)`,
+      [guestUserId, t.amount, t.merchant, t.category, t.date]
+    );
+  }
+}
+
+module.exports = { seed, seedGuestData };

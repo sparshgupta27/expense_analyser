@@ -133,6 +133,9 @@ export const getUpcomingRenewals = () =>
 export const getAuthStatus = () =>
   api.get('/auth/status', { timeout: 10000 }).then((r) => r.data);
 
+export const signInAsGuest = () =>
+  api.post('/auth/guest').then((r) => r.data);
+
 export const triggerSync = () =>
   api.post('/api/sync', {}, { timeout: 120000 }).then((r) => r.data);
 

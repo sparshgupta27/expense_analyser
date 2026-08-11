@@ -21,7 +21,7 @@ const FEATURES = [
   },
 ];
 
-export default function SignInWall({ apiUrl }) {
+export default function SignInWall({ apiUrl, onGuestLogin }) {
   const connectUrl = `${apiUrl}/auth/google?origin=${encodeURIComponent(window.location.origin)}`;
 
   return (
@@ -62,15 +62,25 @@ export default function SignInWall({ apiUrl }) {
             </p>
           </div>
 
-          {/* CTA button */}
-          <a
-            href={connectUrl}
-            className="group flex items-center justify-center gap-3 w-full px-5 py-3.5 bg-[#2D5C4E] hover:bg-[#254B40] text-white rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-[0.98]"
-          >
-            <Mail className="w-5 h-5" />
-            <span>Connect Gmail</span>
-            <ArrowRight className="w-4 h-4 opacity-70 group-hover:translate-x-0.5 transition-transform" />
-          </a>
+          <div className="flex flex-col gap-3">
+            {/* CTA button */}
+            <a
+              href={connectUrl}
+              className="group flex items-center justify-center gap-3 w-full px-5 py-3.5 bg-[#2D5C4E] hover:bg-[#254B40] text-white rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-[0.98]"
+            >
+              <Mail className="w-5 h-5" />
+              <span>Connect Gmail</span>
+              <ArrowRight className="w-4 h-4 opacity-70 group-hover:translate-x-0.5 transition-transform" />
+            </a>
+
+            {/* Guest button */}
+            <button
+              onClick={onGuestLogin}
+              className="w-full px-5 py-3.5 bg-white border border-[#E8E3D8] hover:bg-[#F5F2EA] text-[#1C1B19] rounded-xl text-sm font-bold transition-all shadow-sm active:scale-[0.98]"
+            >
+              Continue as Guest (Demo)
+            </button>
+          </div>
 
           {/* Permission note */}
           <p className="text-[11px] text-[#6C6A65] text-center mt-4 leading-relaxed">
