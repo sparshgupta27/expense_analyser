@@ -1,6 +1,7 @@
 const express = require('express');
 const { getAuthUrl, handleCallback, getAuthenticatedClient, clearAuthToken } = require('../auth/google');
 const { signSessionToken, optionalAuth } = require('../middleware/auth');
+const { auditLog } = require('../utils/audit');
 
 const router = express.Router();
 
@@ -55,21 +56,28 @@ router.get('/google/callback', async (req, res) => {
 
   if (error || !code) {
     console.warn('[Auth] OAuth authorization was cancelled or failed:', error || 'Missing code');
+    await auditLog({ action: 'login_failure', req, metadata: { reason: error || 'missing_code' } });
     return res.redirect(`${frontendUrl}/?error=auth_cancelled`);
   }
 
   try {
     const redirectUri = getRequestRedirectUri(req);
-    // handleCallback now returns { user: { id, email } }
     const { user } = await handleCallback(code, redirectUri);
 
-    // Sign JWT with stable UUID as sub
     const sessionToken = signSessionToken(user);
+
+    await auditLog({
+      userId: user.id,
+      action: 'gmail_connected',
+      req,
+      metadata: { email: user.email },
+    });
 
     console.log(`[Auth] Google OAuth succeeded for ${user.email} (id=${user.id}) — issuing JWT`);
     res.redirect(`${frontendUrl}/?connected=true&autosync=true&token=${encodeURIComponent(sessionToken)}`);
   } catch (err) {
     console.error('[Auth] OAuth callback error:', err.message);
+    await auditLog({ action: 'login_failure', req, metadata: { reason: err.message } });
     res.redirect(`${frontendUrl}/?error=auth_failed`);
   }
 });
@@ -77,7 +85,6 @@ router.get('/google/callback', async (req, res) => {
 /**
  * GET /auth/status
  * Check if the current user has a valid OAuth token.
- * Reads user identity from JWT (Authorization header).
  */
 router.get('/status', optionalAuth, async (req, res) => {
   try {
@@ -104,12 +111,18 @@ router.get('/status', optionalAuth, async (req, res) => {
 
 /**
  * POST /auth/logout
- * Disconnect current account and clear tokens for this user.
+ * Disconnect current account and clear Google tokens for this user.
  */
 router.post('/logout', optionalAuth, async (req, res) => {
   try {
     if (req.user) {
       await clearAuthToken(req.user.id);
+      await auditLog({
+        userId: req.user.id,
+        action: 'gmail_disconnected',
+        req,
+        metadata: { email: req.user.email },
+      });
       console.log(`[Auth] User ${req.user.email} (id=${req.user.id}) disconnected.`);
     }
     res.json({ message: 'Account disconnected successfully' });

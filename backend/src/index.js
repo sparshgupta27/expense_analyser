@@ -3,7 +3,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const cron = require('node-cron');
 const config = require('./config');
-const { pool, queryAsUser } = require('./db/pool');
+const { pool, withUserTransaction } = require('./db/pool');
 const { runMigrations } = require('./db/migrate');
 const { seed } = require('./db/seed');
 const { startParserConsumer } = require('./services/parserService');
@@ -14,6 +14,7 @@ const { runSubscriptionDetection } = require('./jobs/subscriptionDetector');
 const { detectAnomalies } = require('./jobs/anomalyDetector');
 const { requireAuth } = require('./middleware/auth');
 const { getAllAuthenticatedUsers } = require('./auth/google');
+const { auditLog } = require('./utils/audit');
 
 const app = express();
 
@@ -102,6 +103,7 @@ app.use('/api/subscriptions', requireAuth, require('./routes/subscriptions'));
 // Manual sync trigger — user-scoped
 app.post('/api/sync', requireAuth, (req, res) => {
   const { id: userId, email: userEmail } = req.user;
+  auditLog({ userId, action: 'sync_started', req, metadata: { email: userEmail } });
   syncEmails({ userId, userEmail })
     .then((result) => console.log(`[API] Sync completed for ${userEmail}:`, result))
     .catch((err) => console.error(`[API] Sync error for ${userEmail}:`, err.message));
@@ -109,27 +111,24 @@ app.post('/api/sync', requireAuth, (req, res) => {
   res.json({ message: 'Gmail sync started in background', status: 'syncing' });
 });
 
-// Database reset endpoint — user-scoped, runs inside a transaction
+// Database reset — runs all deletes inside one RLS-scoped transaction
 app.post('/api/reset', requireAuth, async (req, res) => {
   const { id: userId, email: userEmail } = req.user;
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    await client.query(`SET LOCAL app.current_user_id = '${userId}'`);
-    await client.query('DELETE FROM category_overrides WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM subscriptions WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM transactions WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM raw_emails WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM merchant_profiles WHERE user_id = $1', [userId]);
-    await client.query('COMMIT');
+    await withUserTransaction(userId, async (client) => {
+      await client.query('DELETE FROM category_overrides WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM subscriptions      WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM transactions        WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM raw_emails          WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM merchant_profiles   WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM sync_state          WHERE user_id = $1', [userId]);
+    });
     console.log(`[API] Database reset for ${userEmail} (id=${userId})`);
+    await auditLog({ userId, action: 'data_reset', req, metadata: { email: userEmail } });
     res.json({ message: 'Your data reset successfully.' });
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
     console.error('[API] Reset error:', err.message);
     res.status(500).json({ error: 'Reset failed', details: err.message });
-  } finally {
-    client.release();
   }
 });
 

@@ -1,13 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutDashboard, CreditCard, RefreshCw, ChevronLeft, ChevronRight,
-  Wallet, AlertCircle, CheckCircle, ChevronDown, LogOut, RotateCw
+  Wallet, AlertCircle, CheckCircle, ChevronDown, LogOut, RotateCw,
+  Trash2, UserCircle2
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import Subscriptions from './pages/Subscriptions';
 import SignInWall from './components/SignInWall';
-import { getAuthStatus, triggerSync, disconnectAuth, setSessionToken, clearSessionToken, API_URL } from './api/client';
+import {
+  getAuthStatus, triggerSync, disconnectAuth, resetAllData,
+  setSessionToken, clearSessionToken, storeUserFromToken, getStoredUser,
+  API_URL
+} from './api/client';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -71,6 +76,13 @@ function getSyncErrorMessage(err, fallback) {
   return fallback;
 }
 
+/** Derive a two-letter avatar from an email or display name */
+function getInitials(emailOrName = '') {
+  const parts = emailOrName.split(/[@.\s]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return (parts[0]?.[0] || '?').toUpperCase();
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard');
   const [selectedMonth, setSelectedMonth] = useState(getLocalYearMonth());
@@ -82,6 +94,9 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncOverlay, setSyncOverlay] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [currentUser, setCurrentUser] = useState(null);  // { id, email }
+  const [resetConfirm, setResetConfirm] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
@@ -99,6 +114,9 @@ export default function App() {
 
     if (token) {
       setSessionToken(token);
+      // Decode JWT to get user identity (sub=UUID, email)
+      const user = storeUserFromToken(token);
+      if (user) setCurrentUser(user);
     }
 
     if (justConnected) {
@@ -107,14 +125,11 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
 
       if (needsAutoSync) {
-        // Show full-screen syncing overlay and trigger sync
         setSyncOverlay(true);
         triggerSync()
           .then((result) => {
             setSyncOverlay(false);
-            if (result?.latest_month) {
-              setSelectedMonth(result.latest_month);
-            }
+            if (result?.latest_month) setSelectedMonth(result.latest_month);
             setRefreshNonce((n) => n + 1);
             setAuthBanner(
               result?.parsed > 0
@@ -134,18 +149,27 @@ export default function App() {
       window.history.replaceState({}, document.title, window.location.pathname);
       setAuthLoading(false);
     } else {
-      // No URL params — check server auth status using session token
+      // No URL params — restore user from sessionStorage, then verify server auth
+      const storedUser = getStoredUser();
+      if (storedUser) setCurrentUser(storedUser);
+
       getAuthStatus()
         .then((res) => {
           if (res?.authenticated) {
             setIsConnected(true);
+            // Sync server email into state (authoritative)
+            if (res.email && storedUser) {
+              setCurrentUser((u) => ({ ...u, email: res.email }));
+            }
           } else {
             clearSessionToken();
+            setCurrentUser(null);
             setIsConnected(false);
           }
         })
         .catch(() => {
           clearSessionToken();
+          setCurrentUser(null);
           setIsConnected(false);
         })
         .finally(() => {
@@ -159,6 +183,7 @@ export default function App() {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setDropdownOpen(false);
+        setResetConfirm(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -171,10 +196,7 @@ export default function App() {
     const [year, month] = selectedMonth.split('-').map(Number);
     const date = new Date(year, month - 1 + direction, 1);
     const nextMonth = getLocalYearMonth(date);
-
-    if (direction > 0 && nextMonth > currentMaxMonth) {
-      return;
-    }
+    if (direction > 0 && nextMonth > currentMaxMonth) return;
     setSelectedMonth(nextMonth);
   };
 
@@ -207,9 +229,30 @@ export default function App() {
       await disconnectAuth();
     } catch (e) {}
     clearSessionToken();
+    setCurrentUser(null);
     setIsConnected(false);
     setDropdownOpen(false);
+    setResetConfirm(false);
     setAuthBanner(null);
+  };
+
+  const handleResetData = async () => {
+    if (!resetConfirm) {
+      setResetConfirm(true);
+      return;
+    }
+    setIsResetting(true);
+    try {
+      await resetAllData();
+      setRefreshNonce((n) => n + 1);
+      setAuthBanner('All your data has been reset successfully.');
+    } catch (err) {
+      setAuthBanner(getSyncErrorMessage(err, 'Reset failed. Please try again.'));
+    } finally {
+      setIsResetting(false);
+      setResetConfirm(false);
+      setDropdownOpen(false);
+    }
   };
 
   const renderPage = () => {
@@ -242,6 +285,9 @@ export default function App() {
     return <SignInWall apiUrl={API_URL} />;
   }
 
+  const userInitials = getInitials(currentUser?.email || '');
+  const userEmail = currentUser?.email || '';
+
   return (
     <ErrorBoundary>
       {/* Full-screen syncing overlay */}
@@ -259,27 +305,26 @@ export default function App() {
       )}
 
       <div className="flex flex-col md:flex-row min-h-screen bg-[#FAF8F3] text-[#1C1B19] font-sans">
-        {/* Sidebar / Navigation Header */}
+        {/* Sidebar */}
         <aside className="w-full md:w-64 bg-white border-b md:border-b-0 md:border-r border-[#E8E3D8] p-5 flex flex-col md:fixed md:inset-y-0 z-50 shadow-[1px_0_3px_rgba(28,27,25,0.02)]">
+          {/* Logo */}
           <div className="flex items-center justify-between md:justify-start gap-3 mb-6 md:mb-8">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-lg bg-[#2D5C4E] flex items-center justify-center text-white shadow-sm">
                 <Wallet className="w-5 h-5" />
               </div>
               <div>
-                <h1 className="font-bold text-lg text-[#1C1B19] tracking-tight">
-                  SpendLens
-                </h1>
+                <h1 className="font-bold text-lg text-[#1C1B19] tracking-tight">SpendLens</h1>
                 <p className="text-[10px] text-[#6C6A65] font-semibold tracking-wider uppercase">UPI & Bank Passbook</p>
               </div>
             </div>
           </div>
 
+          {/* Navigation */}
           <nav className="flex md:flex-col gap-1.5 flex-1 overflow-x-auto pb-2 md:pb-0">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = activePage === item.id;
-
               return (
                 <button
                   key={item.id}
@@ -297,12 +342,29 @@ export default function App() {
             })}
           </nav>
 
-          <div className="hidden md:block pt-4 border-t border-[#E8E3D8] text-center">
-            <p className="text-[11px] text-[#6C6A65] font-mono">SpendLens Ledger v1.0</p>
+          {/* User Identity Badge — shown on desktop sidebar */}
+          {userEmail && (
+            <div className="hidden md:flex items-center gap-2.5 mt-4 pt-4 border-t border-[#E8E3D8]">
+              <div className="w-8 h-8 rounded-full bg-[#EBF3F0] border border-[#D2E4DC] flex items-center justify-center text-[#2D5C4E] text-[11px] font-bold flex-shrink-0 select-none">
+                {userInitials}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold text-[#1C1B19] truncate" title={userEmail}>
+                  {userEmail.split('@')[0]}
+                </p>
+                <p className="text-[10px] text-[#6C6A65] truncate" title={userEmail}>
+                  {userEmail}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="hidden md:block pt-3 text-center">
+            <p className="text-[10px] text-[#6C6A65] font-mono">SpendLens Ledger v1.0</p>
           </div>
         </aside>
 
-        {/* Main Content Area */}
+        {/* Main Content */}
         <main className="flex-1 md:ml-64 p-4 sm:p-6 lg:p-8 min-h-screen">
           {authBanner && (
             <div className="flex items-center justify-between p-4 mb-6 rounded-lg bg-[#EBF3F0] border border-[#D2E4DC] text-[#2D5C4E] text-xs font-medium animate-fadeIn">
@@ -329,7 +391,7 @@ export default function App() {
 
             {activePage !== 'subscriptions' && (
               <div className="flex flex-wrap items-center gap-3">
-                {/* Time Range Selector Pills (1M | 3M | 6M | 12M) */}
+                {/* Time Range Selector */}
                 <div className="flex items-center bg-white border border-[#E8E3D8] rounded-md p-1 gap-1 shadow-2xs">
                   {TIME_RANGES.map((r) => (
                     <button
@@ -346,15 +408,21 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* Gmail Connection Status Button / Dropdown */}
+                {/* Gmail Connection Status / Dropdown */}
                 <div className="relative" ref={dropdownRef}>
                   {isConnected ? (
                     <button
-                      onClick={() => setDropdownOpen(!dropdownOpen)}
+                      onClick={() => { setDropdownOpen(!dropdownOpen); setResetConfirm(false); }}
                       className="flex items-center gap-2 px-3 py-1.5 bg-[#EBF3F0] border border-[#D2E4DC] hover:bg-[#E2EFEA] text-[#2D5C4E] rounded-md text-xs font-semibold transition"
                     >
-                      <CheckCircle className="w-3.5 h-3.5 text-[#2D5C4E]" />
-                      <span>Gmail Sync Active</span>
+                      {/* Show user initial inside the connected button */}
+                      <span className="w-4 h-4 rounded-full bg-[#2D5C4E] text-white text-[9px] font-bold flex items-center justify-center flex-shrink-0">
+                        {userInitials}
+                      </span>
+                      <span className="hidden sm:inline max-w-[120px] truncate" title={userEmail}>
+                        {userEmail.split('@')[0]}
+                      </span>
+                      <span className="sm:hidden">Account</span>
                       <ChevronDown className="w-3.5 h-3.5 opacity-70 ml-1" />
                     </button>
                   ) : (
@@ -369,7 +437,20 @@ export default function App() {
 
                   {/* Dropdown Menu */}
                   {dropdownOpen && (
-                    <div className="absolute right-0 mt-2 w-56 bg-white border border-[#E8E3D8] rounded-lg shadow-lg p-1.5 z-50">
+                    <div className="absolute right-0 mt-2 w-64 bg-white border border-[#E8E3D8] rounded-lg shadow-lg p-1.5 z-50">
+                      {/* User info header inside dropdown */}
+                      {userEmail && (
+                        <div className="flex items-center gap-2.5 px-3 py-2.5 mb-1 border-b border-[#E8E3D8]">
+                          <div className="w-8 h-8 rounded-full bg-[#EBF3F0] border border-[#D2E4DC] flex items-center justify-center text-[#2D5C4E] text-[11px] font-bold flex-shrink-0">
+                            {userInitials}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-semibold text-[#1C1B19] truncate">{userEmail.split('@')[0]}</p>
+                            <p className="text-[10px] text-[#6C6A65] truncate" title={userEmail}>{userEmail}</p>
+                          </div>
+                        </div>
+                      )}
+
                       <button
                         onClick={handleSyncNow}
                         disabled={isSyncing}
@@ -383,11 +464,43 @@ export default function App() {
                         href={`${API_URL}/auth/google?origin=${encodeURIComponent(window.location.origin)}`}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-[#1C1B19] hover:bg-[#F5F2EA] rounded transition"
                       >
-                        <Wallet className="w-3.5 h-3.5 text-[#8C6D23]" />
+                        <UserCircle2 className="w-3.5 h-3.5 text-[#8C6D23]" />
                         <span>Change Account</span>
                       </a>
 
                       <div className="my-1 border-t border-[#E8E3D8]" />
+
+                      {/* Reset Data — two-step confirm */}
+                      {resetConfirm ? (
+                        <div className="px-3 py-2 rounded bg-[#FBF0F0] border border-[#EDD5D5] mx-0.5">
+                          <p className="text-[11px] text-[#B33F3F] font-semibold mb-2">
+                            This deletes ALL your transactions, subscriptions, and merchant profiles. Continue?
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={handleResetData}
+                              disabled={isResetting}
+                              className="flex-1 px-2 py-1 bg-[#B33F3F] text-white rounded text-[11px] font-bold hover:bg-[#9C3535] disabled:opacity-50 transition"
+                            >
+                              {isResetting ? 'Resetting...' : 'Yes, Reset'}
+                            </button>
+                            <button
+                              onClick={() => setResetConfirm(false)}
+                              className="flex-1 px-2 py-1 bg-white border border-[#E8E3D8] text-[#6C6A65] rounded text-[11px] font-medium hover:bg-[#F5F2EA] transition"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={handleResetData}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-[#8C6D23] hover:bg-[#FAF5EA] rounded transition"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Reset My Data</span>
+                        </button>
+                      )}
 
                       <button
                         onClick={handleDisconnect}

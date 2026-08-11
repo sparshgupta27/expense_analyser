@@ -31,7 +31,8 @@ function getAuthUrl(overrideRedirectUri, state) {
 }
 
 /**
- * Fetch the authenticated user's email and Google subject ID using the access token.
+ * Fetch user info from Google using the access token.
+ * Returns { email, googleSubject, displayName, avatarUrl }.
  */
 async function getUserInfo(accessToken) {
   return new Promise((resolve) => {
@@ -46,14 +47,16 @@ async function getUserInfo(accessToken) {
             resolve({
               email: data.email || null,
               googleSubject: data.id || null,
+              displayName: data.name || null,
+              avatarUrl: data.picture || null,
             });
           } catch (e) {
-            resolve({ email: null, googleSubject: null });
+            resolve({ email: null, googleSubject: null, displayName: null, avatarUrl: null });
           }
         });
       }
     );
-    req.on('error', () => resolve({ email: null, googleSubject: null }));
+    req.on('error', () => resolve({ email: null, googleSubject: null, displayName: null, avatarUrl: null }));
     req.end();
   });
 }
@@ -62,44 +65,72 @@ async function getUserInfo(accessToken) {
  * Exchange authorization code for tokens, upsert the user into the users table,
  * and store encrypted OAuth tokens keyed by user_id (UUID).
  *
- * @returns {{ user: { id: string, email: string } }}
+ * Upsert strategy:
+ *  1. Conflict on google_subject (most stable identifier — survives email change).
+ *  2. Fallback ON CONFLICT (email) if subject is null / first-time migration.
+ *
+ * @returns {{ user: { id: string, email: string, displayName: string, avatarUrl: string } }}
  */
 async function handleCallback(code, overrideRedirectUri) {
   const oauth2Client = createOAuth2Client(overrideRedirectUri);
   const { tokens } = await oauth2Client.getToken(code);
 
-  // Identify user
   if (!tokens.access_token) {
     throw new Error('Google OAuth did not return an access token');
   }
 
-  const { email: userEmail, googleSubject } = await getUserInfo(tokens.access_token);
+  const { email: userEmail, googleSubject, displayName, avatarUrl } = await getUserInfo(tokens.access_token);
   if (!userEmail) {
     throw new Error('Could not determine user email from Google OAuth tokens');
   }
 
-  // Upsert into users table — email is the stable identity key
-  const userResult = await query(
-    `INSERT INTO users (email, google_subject, last_login_at)
-     VALUES ($1, $2, NOW())
-     ON CONFLICT (email)
-     DO UPDATE SET
-       google_subject  = COALESCE($2, users.google_subject),
-       last_login_at   = NOW()
-     RETURNING id, email`,
-    [userEmail, googleSubject]
-  );
-  const user = userResult.rows[0];
+  // Upsert user — prefer google_subject as stable conflict target
+  // Falls back to email conflict for users who authenticated before
+  // google_subject was tracked.
+  let user;
+  if (googleSubject) {
+    const result = await query(
+      `INSERT INTO users (email, google_subject, display_name, avatar_url, last_login_at, updated_at)
+       VALUES ($1, $2, $3, $4, NOW(), NOW())
+       ON CONFLICT (google_subject)
+       DO UPDATE SET
+         email        = EXCLUDED.email,
+         display_name = EXCLUDED.display_name,
+         avatar_url   = EXCLUDED.avatar_url,
+         last_login_at = NOW(),
+         updated_at   = NOW()
+       RETURNING id, email, display_name, avatar_url`,
+      [userEmail, googleSubject, displayName, avatarUrl]
+    );
+    user = result.rows[0];
+  } else {
+    // Fallback: no subject available (rare edge case)
+    const result = await query(
+      `INSERT INTO users (email, display_name, avatar_url, last_login_at, updated_at)
+       VALUES ($1, $2, $3, NOW(), NOW())
+       ON CONFLICT (email)
+       DO UPDATE SET
+         display_name  = EXCLUDED.display_name,
+         avatar_url    = EXCLUDED.avatar_url,
+         last_login_at = NOW(),
+         updated_at    = NOW()
+       RETURNING id, email, display_name, avatar_url`,
+      [userEmail, displayName, avatarUrl]
+    );
+    user = result.rows[0];
+  }
+
   const userId = user.id;
 
-  // Store encrypted tokens in DB keyed by user_id
+  // Store encrypted Google tokens keyed by (user_id, provider, token_type)
   try {
     if (tokens.refresh_token) {
       const { encrypted, iv, authTag } = encryptToken(tokens.refresh_token);
       await query(
-        `INSERT INTO auth_tokens (user_id, user_email, token_type, encrypted_token, token_iv, token_auth_tag, updated_at)
-         VALUES ($1, $2, 'google_refresh', $3, $4, $5, NOW())
-         ON CONFLICT (user_id, token_type)
+        `INSERT INTO auth_tokens
+           (user_id, user_email, provider, token_type, encrypted_token, token_iv, token_auth_tag, updated_at)
+         VALUES ($1, $2, 'google', 'refresh', $3, $4, $5, NOW())
+         ON CONFLICT (user_id, provider, token_type)
          DO UPDATE SET
            encrypted_token = $3,
            token_iv        = $4,
@@ -116,9 +147,10 @@ async function handleCallback(code, overrideRedirectUri) {
       });
       const { encrypted, iv, authTag } = encryptToken(payload);
       await query(
-        `INSERT INTO auth_tokens (user_id, user_email, token_type, encrypted_token, token_iv, token_auth_tag, updated_at)
-         VALUES ($1, $2, 'google_access', $3, $4, $5, NOW())
-         ON CONFLICT (user_id, token_type)
+        `INSERT INTO auth_tokens
+           (user_id, user_email, provider, token_type, encrypted_token, token_iv, token_auth_tag, updated_at)
+         VALUES ($1, $2, 'google', 'access', $3, $4, $5, NOW())
+         ON CONFLICT (user_id, provider, token_type)
          DO UPDATE SET
            encrypted_token = $3,
            token_iv        = $4,
@@ -133,12 +165,20 @@ async function handleCallback(code, overrideRedirectUri) {
     console.warn('[Auth] Failed to store tokens in DB:', dbErr.message);
   }
 
-  return { tokens, user: { id: userId, email: userEmail } };
+  return {
+    tokens,
+    user: {
+      id: userId,
+      email: user.email,
+      displayName: user.display_name,
+      avatarUrl: user.avatar_url,
+    },
+  };
 }
 
 /**
  * Get an authenticated OAuth2 client for a specific user (by UUID).
- * Returns null if no token is stored.
+ * Decrypts stored tokens. Returns null if no token exists.
  */
 async function getAuthenticatedClient(userId) {
   if (!userId) {
@@ -155,7 +195,8 @@ async function getAuthenticatedClient(userId) {
       `SELECT token_type, encrypted_token, token_iv, token_auth_tag
        FROM auth_tokens
        WHERE user_id = $1
-         AND token_type IN ('google_refresh', 'google_access')`,
+         AND provider = 'google'
+         AND token_type IN ('refresh', 'access')`,
       [userId]
     );
 
@@ -167,9 +208,9 @@ async function getAuthenticatedClient(userId) {
           authTag: row.token_auth_tag,
         });
 
-        if (row.token_type === 'google_refresh') {
+        if (row.token_type === 'refresh') {
           refreshToken = plaintext;
-        } else if (row.token_type === 'google_access') {
+        } else if (row.token_type === 'access') {
           const parsed = JSON.parse(plaintext);
           accessToken = parsed.access_token || null;
           tokenExpiry = parsed.expiry_date || null;
@@ -207,30 +248,34 @@ async function getAuthenticatedClient(userId) {
 }
 
 /**
- * Clear stored OAuth tokens for a specific user (by UUID).
+ * Clear stored Google OAuth tokens for a specific user (by UUID).
  */
 async function clearAuthToken(userId) {
   if (!userId) return;
   try {
-    await query('DELETE FROM auth_tokens WHERE user_id = $1', [userId]);
-    console.log(`[Auth] Tokens cleared for user_id=${userId}`);
+    await query(
+      "DELETE FROM auth_tokens WHERE user_id = $1 AND provider = 'google'",
+      [userId]
+    );
+    console.log(`[Auth] Google tokens cleared for user_id=${userId}`);
   } catch (e) {
     console.warn('[Auth] Failed to clear tokens:', e.message);
   }
 }
 
 /**
- * Get all users that have stored refresh tokens (for cron sync).
+ * Get all users with valid Google refresh tokens (for cron sync).
  * Returns array of { id, email }.
  */
 async function getAllAuthenticatedUsers() {
   try {
     const result = await query(
-      `SELECT u.id, u.email
+      `SELECT DISTINCT u.id, u.email
        FROM users u
-       INNER JOIN auth_tokens at ON at.user_id = u.id
-       WHERE at.token_type = 'google_refresh'
-         AND at.encrypted_token IS NOT NULL`
+       INNER JOIN auth_tokens t ON t.user_id = u.id
+       WHERE t.provider = 'google'
+         AND t.token_type = 'refresh'
+         AND t.encrypted_token IS NOT NULL`
     );
     return result.rows;
   } catch (e) {

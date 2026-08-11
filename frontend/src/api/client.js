@@ -9,31 +9,86 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Request interceptor: attach Authorization header
-// NOTE: sessionStorage is intentionally used here (not localStorage) so that
-// each browser tab/window has its own isolated session. This prevents a new
-// tab from inheriting a previously-logged-in user's token.
+// ── Session Storage (sessionStorage → per-tab isolation) ─────────────────────
+// sessionStorage is used intentionally: each browser tab has its own isolated
+// session. Opening a new tab will NOT inherit another user's token.
+
+export const setSessionToken = (token) => {
+  if (token) sessionStorage.setItem('spendlens_token', token);
+};
+
+export const clearSessionToken = () => {
+  sessionStorage.removeItem('spendlens_token');
+  sessionStorage.removeItem('spendlens_user');
+};
+
+export const getStoredToken = () => sessionStorage.getItem('spendlens_token');
+
+/**
+ * Decode JWT payload (client-side, no verification).
+ * Used only for reading display fields (email, sub). Auth is always
+ * enforced server-side via the Bearer token on every request.
+ */
+export function decodeJwtPayload(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Store decoded user identity from JWT in sessionStorage.
+ * Keeps { id, email } available without re-decoding on every render.
+ */
+export function storeUserFromToken(token) {
+  const payload = decodeJwtPayload(token);
+  if (!payload?.sub || !payload?.email) return null;
+  const user = { id: payload.sub, email: payload.email };
+  sessionStorage.setItem('spendlens_user', JSON.stringify(user));
+  return user;
+}
+
+export function getStoredUser() {
+  try {
+    const raw = sessionStorage.getItem('spendlens_user');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Request interceptor: attach Authorization header ─────────────────────────
 api.interceptors.request.use((config) => {
-  const token = sessionStorage.getItem('spendlens_token');
+  const token = getStoredToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-export const setSessionToken = (token) => {
-  if (token) {
-    sessionStorage.setItem('spendlens_token', token);
+// ── Response interceptor: handle 401 globally ────────────────────────────────
+// If any API call returns 401 (expired/invalid JWT), clear the session and
+// reload so the sign-in wall is shown. This catches token expiry mid-session.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      const isAuthStatusCheck = error?.config?.url?.includes('/auth/status');
+      if (!isAuthStatusCheck) {
+        clearSessionToken();
+        // Soft reload — lets App.jsx re-evaluate auth state
+        window.location.reload();
+      }
+    }
+    return Promise.reject(error);
   }
-};
+);
 
-export const clearSessionToken = () => {
-  sessionStorage.removeItem('spendlens_token');
-};
-
-export const getStoredToken = () => sessionStorage.getItem('spendlens_token');
-
-// Dashboard
+// ── Dashboard ─────────────────────────────────────────────────────────────────
 export const getDashboardSummary = (month, range = 1) =>
   api.get('/api/dashboard/summary', { params: { month, range } }).then((r) => r.data);
 
@@ -52,7 +107,7 @@ export const getAnomalies = (month) =>
 export const getInsights = (month, range = 1) =>
   api.get('/api/dashboard/insights', { params: { month, range } }).then((r) => r.data);
 
-// Transactions
+// ── Transactions ──────────────────────────────────────────────────────────────
 export const getTransactions = (params) =>
   api.get('/api/transactions', { params }).then((r) => r.data);
 
@@ -62,14 +117,14 @@ export const getTransaction = (id) =>
 export const updateCategory = (id, category) =>
   api.patch(`/api/transactions/${id}/category`, { category }).then((r) => r.data);
 
-// Subscriptions
+// ── Subscriptions ─────────────────────────────────────────────────────────────
 export const getSubscriptions = () =>
   api.get('/api/subscriptions').then((r) => r.data);
 
 export const getUpcomingRenewals = () =>
   api.get('/api/subscriptions/upcoming').then((r) => r.data);
 
-// Auth & Sync
+// ── Auth & Sync ───────────────────────────────────────────────────────────────
 export const getAuthStatus = () =>
   api.get('/auth/status').then((r) => r.data);
 
@@ -78,5 +133,8 @@ export const triggerSync = () =>
 
 export const disconnectAuth = () =>
   api.post('/auth/logout').then((r) => r.data);
+
+export const resetAllData = () =>
+  api.post('/api/reset').then((r) => r.data);
 
 export default api;
