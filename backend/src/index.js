@@ -18,19 +18,17 @@ const { auditLog } = require('./utils/audit');
 
 const app = express();
 
-// Middleware (Permissive CORS for Vercel & Azure)
+// Middleware
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (
-      origin.includes('vercel.app') ||
-      origin.includes('azurewebsites.net') ||
       origin.includes('localhost') ||
       origin.includes('127.0.0.1')
     ) {
       return callback(null, true);
     }
-    callback(null, true);
+    callback(null, false);
   },
   credentials: true,
 }));
@@ -48,6 +46,7 @@ app.get('/', (req, res) => {
     auth_connect: 'http://localhost:3001/auth/google',
   });
 });
+
 
 // Health check
 // ============================================================
