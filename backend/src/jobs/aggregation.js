@@ -52,18 +52,18 @@ async function aggregateMonthlyTrend(redis, userId) {
 async function aggregateCategoryBreakdown(redis, userId) {
   const { rows } = await queryAsUser(userId, `
     SELECT
-      TO_CHAR(transaction_date, 'YYYY-MM') AS month,
-      COALESCE(
-        (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id AND co.user_id = $1),
-        t.category
-      ) AS effective_category,
-      SUM(amount) AS total_amount,
+      TO_CHAR(t.transaction_date, 'YYYY-MM') AS month,
+      COALESCE(co.category, t.category) AS effective_category,
+      SUM(t.amount) AS total_amount,
       COUNT(*) AS count
     FROM transactions t
+    LEFT JOIN category_overrides co
+      ON co.transaction_id = t.id
+     AND co.user_id = t.user_id
     WHERE t.user_id = $1
       AND t.transaction_type = 'debit'
       AND t.transaction_date >= NOW() - INTERVAL '3 months'
-    GROUP BY TO_CHAR(transaction_date, 'YYYY-MM'), effective_category
+    GROUP BY TO_CHAR(t.transaction_date, 'YYYY-MM'), COALESCE(co.category, t.category)
     ORDER BY month DESC, total_amount DESC
   `, [userId]);
 

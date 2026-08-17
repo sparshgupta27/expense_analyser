@@ -51,7 +51,7 @@ export default function Dashboard({ month, range = 1, refreshKey = 0 }) {
       try {
         const [s, t, c, m, a, i] = await Promise.all([
           getDashboardSummary(month, range).catch(() => null),
-          getMonthlyTrend(range === 1 ? 12 : range).catch(() => []),
+          getMonthlyTrend(month, range === 1 ? 12 : range).catch(() => []),
           getCategoryBreakdown(month, range).catch(() => []),
           getTopMerchants(month, 10, range).catch(() => []),
           getAnomalies(month).catch(() => []),

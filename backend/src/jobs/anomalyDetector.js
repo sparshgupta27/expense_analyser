@@ -33,16 +33,16 @@ async function detectAnomalies(userId) {
     // Get current month's spend by category
     const { rows: currentSpend } = await queryAsUser(userId, `
       SELECT
-        COALESCE(
-          (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id AND co.user_id = $1),
-          t.category
-        ) AS effective_category,
-        SUM(amount) AS current_amount
+        COALESCE(co.category, t.category) AS effective_category,
+        SUM(t.amount) AS current_amount
       FROM transactions t
-      WHERE user_id = $1
-        AND transaction_type = 'debit'
-        AND TO_CHAR(transaction_date, 'YYYY-MM') = $2
-      GROUP BY effective_category
+      LEFT JOIN category_overrides co
+        ON co.transaction_id = t.id
+       AND co.user_id = t.user_id
+      WHERE t.user_id = $1
+        AND t.transaction_type = 'debit'
+        AND TO_CHAR(t.transaction_date, 'YYYY-MM') = $2
+      GROUP BY COALESCE(co.category, t.category)
     `, [userId, currentMonth]);
 
     // Get rolling average (last N months, excluding current)
@@ -52,18 +52,18 @@ async function detectAnomalies(userId) {
         AVG(monthly_total) AS avg_amount
       FROM (
         SELECT
-          COALESCE(
-            (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id AND co.user_id = $1),
-            t.category
-          ) AS effective_category,
-          TO_CHAR(transaction_date, 'YYYY-MM') AS month,
-          SUM(amount) AS monthly_total
+          COALESCE(co.category, t.category) AS effective_category,
+          TO_CHAR(t.transaction_date, 'YYYY-MM') AS month,
+          SUM(t.amount) AS monthly_total
         FROM transactions t
-        WHERE user_id = $1
-          AND transaction_type = 'debit'
-          AND transaction_date >= NOW() - INTERVAL '${config.anomaly.rollingMonths + 1} months'
-          AND TO_CHAR(transaction_date, 'YYYY-MM') != $2
-        GROUP BY effective_category, TO_CHAR(transaction_date, 'YYYY-MM')
+        LEFT JOIN category_overrides co
+          ON co.transaction_id = t.id
+         AND co.user_id = t.user_id
+        WHERE t.user_id = $1
+          AND t.transaction_type = 'debit'
+          AND t.transaction_date >= NOW() - INTERVAL '${config.anomaly.rollingMonths + 1} months'
+          AND TO_CHAR(t.transaction_date, 'YYYY-MM') != $2
+        GROUP BY COALESCE(co.category, t.category), TO_CHAR(t.transaction_date, 'YYYY-MM')
       ) AS monthly_totals
       GROUP BY effective_category
     `, [userId, currentMonth]);

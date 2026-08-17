@@ -11,7 +11,7 @@
 const crypto = require('crypto');
 const config = require('../config');
 const { queryAsUser } = require('../db/pool');
-const { consumer, connectConsumer } = require('./kafka');
+const { consumer, connectConsumer, isConsumerConnected } = require('./kafka');
 const { parse } = require('../parsers');
 const { normalize } = require('./merchantNormalizer');
 const { categorize } = require('./categorizer');
@@ -155,6 +155,9 @@ async function processMessage(messageData) {
 async function startParserConsumer() {
   try {
     await connectConsumer();
+    if (!isConsumerConnected()) {
+      return;
+    }
 
     await consumer.subscribe({
       topic: config.kafka.topics.rawEmails,

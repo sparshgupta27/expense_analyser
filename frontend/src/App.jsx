@@ -7,9 +7,8 @@ import {
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
 import Subscriptions from './pages/Subscriptions';
-import SignInWall from './components/SignInWall';
 import {
-  getAuthStatus, triggerSync, disconnectAuth, resetAllData, signInAsGuest,
+  getAuthStatus, triggerSync, disconnectAuth, resetAllData,
   setSessionToken, clearSessionToken, storeUserFromToken, getStoredUser,
   API_URL
 } from './api/client';
@@ -100,15 +99,9 @@ export default function App() {
   const dropdownRef = useRef(null);
 
   useEffect(() => {
-    const handleUnauthorized = (e) => {
+    const handleUnauthorized = () => {
       setIsConnected(false);
       setCurrentUser(null);
-      
-      let errorMsg = 'Session expired or invalid.';
-      if (e && e.detail) {
-        errorMsg = `401 from ${e.detail.url}: ${JSON.stringify(e.detail.response)}`;
-      }
-      setAuthBanner(errorMsg);
     };
     window.addEventListener('spendlens:401', handleUnauthorized);
     return () => window.removeEventListener('spendlens:401', handleUnauthorized);
@@ -127,16 +120,29 @@ export default function App() {
     const needsAutoSync = params.get('autosync') === 'true';
     const token = params.get('token');
 
+    // Support both cookie-based auth (no token in URL) and legacy token-in-URL
     if (token) {
       setSessionToken(token);
-      // Decode JWT to get user identity (sub=UUID, email)
       const user = storeUserFromToken(token);
       if (user) setCurrentUser(user);
     }
 
     if (justConnected) {
-      setIsConnected(true);
-      setAuthLoading(false);
+      // If no token in URL (cookie-based), verify session via /auth/status
+      if (!token) {
+        getAuthStatus()
+          .then((res) => {
+            if (res?.authenticated) {
+              setIsConnected(true);
+              if (res.email) setCurrentUser({ email: res.email });
+            }
+          })
+          .catch(() => {})
+          .finally(() => setAuthLoading(false));
+      } else {
+        setIsConnected(true);
+        setAuthLoading(false);
+      }
       window.history.replaceState({}, document.title, window.location.pathname);
 
       if (needsAutoSync) {
@@ -270,26 +276,6 @@ export default function App() {
     }
   };
 
-  const handleGuestLogin = async () => {
-    setAuthLoading(true);
-    try {
-      const res = await signInAsGuest();
-      if (res.token) {
-        setSessionToken(res.token);
-        const user = storeUserFromToken(res.token);
-        setCurrentUser(user);
-        setIsConnected(true);
-        setAuthBanner('Logged in as Demo Guest. Mock data loaded!');
-        setRefreshNonce((n) => n + 1); // trigger refresh
-      }
-    } catch (err) {
-      console.error(err);
-      setAuthBanner('Failed to enter Guest Mode.');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
   const renderPage = () => {
     switch (activePage) {
       case 'dashboard':
@@ -302,23 +288,6 @@ export default function App() {
         return <Dashboard month={selectedMonth} range={timeRange} />;
     }
   };
-
-  // ── Auth gate: loading spinner ──
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-[#FAF8F3] flex flex-col items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-[#E8E3D8] border-t-[#2D5C4E] rounded-full animate-spin" />
-          <p className="text-sm text-[#6C6A65] font-medium">Loading SpendLens…</p>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Auth gate: sign-in wall ──
-  if (!isConnected) {
-    return <SignInWall apiUrl={API_URL} onGuestLogin={handleGuestLogin} />;
-  }
 
   const userInitials = getInitials(currentUser?.email || '');
   const userEmail = currentUser?.email || '';
@@ -425,7 +394,29 @@ export default function App() {
             </div>
 
             {activePage !== 'subscriptions' && (
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+                {/* Month Selector */}
+                <div className="flex items-center bg-white border border-[#E8E3D8] rounded-md p-1 shadow-2xs">
+                  <button
+                    onClick={() => navigateMonth(-1)}
+                    className="p-1 rounded hover:bg-[#F5F2EA] text-[#6C6A65] hover:text-[#1C1B19] transition"
+                    title="Previous Month"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-xs font-mono font-semibold text-[#1C1B19] px-2 min-w-[105px] text-center select-none">
+                    {monthLabel}
+                  </span>
+                  <button
+                    onClick={() => navigateMonth(1)}
+                    disabled={isNextDisabled}
+                    className="p-1 rounded hover:bg-[#F5F2EA] text-[#6C6A65] hover:text-[#1C1B19] disabled:opacity-30 disabled:cursor-not-allowed transition"
+                    title="Next Month"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+
                 {/* Time Range Selector */}
                 <div className="flex items-center bg-white border border-[#E8E3D8] rounded-md p-1 gap-1 shadow-2xs">
                   {TIME_RANGES.map((r) => (
@@ -546,28 +537,6 @@ export default function App() {
                       </button>
                     </div>
                   )}
-                </div>
-
-                {/* Month Selector */}
-                <div className="flex items-center bg-white border border-[#E8E3D8] rounded-md p-1">
-                  <button
-                    onClick={() => navigateMonth(-1)}
-                    className="p-1 rounded hover:bg-[#F5F2EA] text-[#6C6A65] hover:text-[#1C1B19] transition"
-                    title="Previous Month"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <span className="text-xs font-mono font-semibold text-[#1C1B19] px-2.5 min-w-[120px] text-center">
-                    {monthLabel}
-                  </span>
-                  <button
-                    onClick={() => navigateMonth(1)}
-                    disabled={isNextDisabled}
-                    className="p-1 rounded hover:bg-[#F5F2EA] text-[#6C6A65] hover:text-[#1C1B19] disabled:opacity-30 disabled:cursor-not-allowed transition"
-                    title="Next Month"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
                 </div>
               </div>
             )}

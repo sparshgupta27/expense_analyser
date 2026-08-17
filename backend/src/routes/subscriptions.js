@@ -12,6 +12,18 @@ const router = express.Router();
  * List all detected subscriptions with flags for the current user.
  */
 router.get('/', async (req, res) => {
+  if (!req.user) {
+    return res.json({
+      subscriptions: [],
+      summary: {
+        total_subscriptions: 0,
+        monthly_total: 0,
+        upcoming_renewals: 0,
+        ghost_subscriptions: 0,
+        price_changes: 0,
+      },
+    });
+  }
   try {
     const { id: userId } = req.user;
     const { rows } = await queryAsUser(userId, `
@@ -97,6 +109,7 @@ router.get('/', async (req, res) => {
  * Renewals in the next 7 days for the current user.
  */
 router.get('/upcoming', async (req, res) => {
+  if (!req.user) return res.json([]);
   try {
     const { id: userId } = req.user;
     const { rows } = await queryAsUser(userId, `

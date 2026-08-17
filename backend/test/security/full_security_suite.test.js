@@ -276,6 +276,8 @@ function httpReq(method, path, { token = null, body = null } = {}) {
 
 // We need to start the express app on a random port for testing
 const app = require('../../src/index');
+const { runMigrations } = require('../../src/db/migrate');
+const { pool } = require('../../src/db/pool');
 let server;
 let testPort;
 
@@ -290,10 +292,10 @@ async function startTestServer() {
 }
 
 async function stopTestServer() {
-  return new Promise((resolve) => {
-    if (server) server.close(resolve);
-    else resolve();
-  });
+  if (server) {
+    await new Promise((resolve) => server.close(resolve));
+  }
+  await pool.end();
 }
 
 async function runHttpTests() {
@@ -406,12 +408,6 @@ async function runHttpTests() {
     `GET /health returns 200 or 503 (got ${healthRes.status})`);
   assert('services' in healthRes.body, 'Health check includes services object');
 
-  section('HTTP API — CORS & Security Headers');
-
-  const corsRes = await httpReq('GET', '/health');
-  // The server allows credentials
-  assert(corsRes.status === 200 || corsRes.status === 503, 'Health endpoint responds');
-
   section('HTTP API — Reset Isolation');
 
   // User A reset should not affect User B
@@ -479,9 +475,9 @@ assert(!simulateInsert('sync_state', USER_A.id, 'single'), 'User A sync_state ag
 
 async function main() {
   try {
-    // Small delay for the main app's start() to finish DB migrations etc.
-    await new Promise((r) => setTimeout(r, 3000));
-
+    console.log('\n  [Test Server] Running migrations...');
+    await runMigrations();
+    console.log('  [Test Server] Migrations complete.');
     await startTestServer();
     await runHttpTests();
   } catch (err) {
@@ -500,11 +496,12 @@ async function main() {
   if (failures.length > 0) {
     console.error('\n  Failed:');
     failures.forEach((f) => console.error(`    ✗ ${f}`));
-    process.exit(1);
+    throw new Error('Test failed');
   } else {
     console.log('\n  ✅ All security tests passed. User data is isolated.\n');
-    process.exit(0);
   }
 }
 
-main();
+test('Full Security Suite', async () => {
+  await main();
+}, 30000);

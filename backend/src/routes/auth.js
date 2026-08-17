@@ -5,6 +5,21 @@ const { auditLog } = require('../utils/audit');
 
 const router = express.Router();
 
+const ALLOWED_ORIGINS = [
+  process.env.FRONTEND_URL,
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
+].filter(Boolean);
+
+function sanitizeOrigin(origin) {
+  if (origin && ALLOWED_ORIGINS.some(allowed => origin.startsWith(allowed))) {
+    return origin;
+  }
+  return process.env.FRONTEND_URL || 'http://localhost:3000';
+}
+
 function getRequestRedirectUri(req) {
   if (process.env.GOOGLE_REDIRECT_URI) {
     return process.env.GOOGLE_REDIRECT_URI;
@@ -23,12 +38,12 @@ router.get('/google', (req, res) => {
   const originParam = req.query.origin;
   const referer = req.headers.referer || req.headers.origin || '';
   let frontendOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
-  if (originParam && (originParam.startsWith('http://') || originParam.startsWith('https://'))) {
-    frontendOrigin = originParam;
+  if (originParam) {
+    frontendOrigin = sanitizeOrigin(originParam);
   } else if (referer) {
     try {
       const u = new URL(referer);
-      frontendOrigin = u.origin;
+      frontendOrigin = sanitizeOrigin(u.origin);
     } catch (e) {}
   }
   const state = Buffer.from(frontendOrigin).toString('base64url');
@@ -48,9 +63,7 @@ router.get('/google/callback', async (req, res) => {
   if (state) {
     try {
       const decoded = Buffer.from(state, 'base64url').toString('utf8');
-      if (decoded && (decoded.startsWith('http://') || decoded.startsWith('https://'))) {
-        frontendUrl = decoded;
-      }
+      frontendUrl = sanitizeOrigin(decoded);
     } catch (e) {}
   }
 
@@ -74,7 +87,17 @@ router.get('/google/callback', async (req, res) => {
     });
 
     console.log(`[Auth] Google OAuth succeeded for ${user.email} (id=${user.id}) — issuing JWT`);
-    res.redirect(`${frontendUrl}/?connected=true&autosync=true&token=${encodeURIComponent(sessionToken)}`);
+    // Set JWT as httpOnly cookie
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.cookie('spendlens_session', sessionToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      path: '/',
+    });
+
+    res.redirect(`${frontendUrl}/?connected=true&autosync=true`);
   } catch (err) {
     console.error('[Auth] OAuth callback error:', err.message);
     await auditLog({ action: 'login_failure', req, metadata: { reason: err.message } });
@@ -125,33 +148,11 @@ router.post('/logout', optionalAuth, async (req, res) => {
       });
       console.log(`[Auth] User ${req.user.email} (id=${req.user.id}) disconnected.`);
     }
+    res.clearCookie('spendlens_session', { path: '/' });
     res.json({ message: 'Account disconnected successfully' });
   } catch (err) {
     res.status(500).json({ error: 'Disconnect failed', details: err.message });
   }
-});
-
-const { seedGuestData } = require('../db/seed');
-
-/**
- * POST /auth/guest
- * Generates a session token for the demo/guest user to bypass Gmail OAuth.
- */
-router.post('/guest', async (req, res) => {
-  const guestUser = {
-    id: '00000000-0000-0000-0000-000000000000', // Mock UUID for guest
-    email: 'guest@spendlens.demo',
-  };
-  
-  try {
-    await seedGuestData(guestUser.id);
-  } catch (err) {
-    console.error('[Auth] Failed to seed guest data:', err);
-  }
-
-  const sessionToken = signSessionToken(guestUser);
-  console.log(`[Auth] Issued Guest JWT for ${guestUser.email}`);
-  res.json({ token: sessionToken, user: guestUser });
 });
 
 module.exports = router;

@@ -12,23 +12,43 @@ const { processLlmBatch } = require('./jobs/llmBatchParser');
 const { runAggregation } = require('./jobs/aggregation');
 const { runSubscriptionDetection } = require('./jobs/subscriptionDetector');
 const { detectAnomalies } = require('./jobs/anomalyDetector');
-const { requireAuth } = require('./middleware/auth');
+const { requireAuth, optionalAuth } = require('./middleware/auth');
 const { getAllAuthenticatedUsers } = require('./auth/google');
 const { auditLog } = require('./utils/audit');
-
 const app = express();
 
-// Middleware
+process.on('uncaughtException', (err) => {
+  console.warn('[Process] Uncaught exception (handled):', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.warn('[Process] Unhandled rejection (handled):', reason?.message || reason);
+});
+
+// CORS configuration supporting production domains and local development
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : []),
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
+].filter(Boolean);
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (
+      allowedOrigins.includes(origin) ||
       origin.includes('localhost') ||
-      origin.includes('127.0.0.1')
+      origin.includes('127.0.0.1') ||
+      origin.endsWith('.vercel.app') ||
+      origin.endsWith('.onrender.com') ||
+      origin.endsWith('.railway.app')
     ) {
       return callback(null, true);
     }
-    callback(null, false);
+    callback(new Error(`CORS blocked for origin: ${origin}`));
   },
   credentials: true,
 }));
@@ -69,14 +89,22 @@ app.get('/health', async (req, res) => {
   // Check Redis (optional in standalone mode)
   try {
     const Redis = require('ioredis');
+    const redisOptions = {
+      lazyConnect: true,
+      connectTimeout: 500,
+      maxRetriesPerRequest: 0,
+      enableOfflineQueue: false,
+      retryStrategy: () => null,
+    };
     const redis = config.redis.url
-      ? new Redis(config.redis.url)
+      ? new Redis(config.redis.url, redisOptions)
       : new Redis({
           host: config.redis.host,
           port: config.redis.port,
-          lazyConnect: true,
-          connectTimeout: 1000,
+          ...redisOptions,
         });
+    redis.on('error', () => {}); // silence unhandled error events
+    await redis.connect();
     await redis.ping();
     checks.services.redis = 'connected';
     await redis.quit();
@@ -94,10 +122,10 @@ app.get('/health', async (req, res) => {
 // Auth routes — no requireAuth (need to work pre-login)
 app.use('/auth', require('./routes/auth'));
 
-// Protected API routes — require valid JWT
-app.use('/api/dashboard', requireAuth, require('./routes/dashboard'));
-app.use('/api/transactions', requireAuth, require('./routes/transactions'));
-app.use('/api/subscriptions', requireAuth, require('./routes/subscriptions'));
+// Read API routes — optionalAuth (returns empty data if unauthenticated)
+app.use('/api/dashboard', optionalAuth, require('./routes/dashboard'));
+app.use('/api/transactions', optionalAuth, require('./routes/transactions'));
+app.use('/api/subscriptions', optionalAuth, require('./routes/subscriptions'));
 
 // Manual sync trigger — user-scoped
 app.post('/api/sync', requireAuth, (req, res) => {
@@ -178,6 +206,12 @@ app.use((err, req, res, next) => {
 // ============================================================
 async function start() {
   try {
+    app.listen(config.port, () => {
+      console.log(`[Server] Expense Analyzer API running on port ${config.port}`);
+      console.log(`[Server] Environment: ${config.nodeEnv}`);
+      console.log(`[Server] Health check: http://localhost:${config.port}/health`);
+    });
+
     console.log('[Server] Connecting to database...');
     try {
       await runMigrations();
@@ -197,7 +231,6 @@ async function start() {
     // Schedule cron jobs — sync all authenticated users
     cron.schedule(config.sync.cronSchedule, async () => {
       try {
-        // getAllAuthenticatedUsers now returns [{ id, email }]
         const users = await getAllAuthenticatedUsers();
         for (const user of users) {
           try {
@@ -208,18 +241,14 @@ async function start() {
         }
       } catch (e) {}
     });
-
-    app.listen(config.port, () => {
-      console.log(`[Server] Expense Analyzer API running on port ${config.port}`);
-      console.log(`[Server] Environment: ${config.nodeEnv}`);
-      console.log(`[Server] Health check: http://localhost:${config.port}/health`);
-    });
   } catch (err) {
     console.error('[Server] Failed to start:', err);
     process.exit(1);
   }
 }
 
-start();
+if (process.env.NODE_ENV !== 'test') {
+  start();
+}
 
 module.exports = app;

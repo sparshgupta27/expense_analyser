@@ -71,6 +71,9 @@ ALTER TABLE auth_tokens
 -- ============================================================
 -- 6. Drop old global unique constraints (cause cross-user collisions)
 -- ============================================================
+-- First drop foreign keys that depend on the unique constraints
+ALTER TABLE transactions       DROP CONSTRAINT IF EXISTS transactions_gmail_message_id_fkey;
+ALTER TABLE subscriptions      DROP CONSTRAINT IF EXISTS subscriptions_merchant_normalized_fkey;
 ALTER TABLE raw_emails         DROP CONSTRAINT IF EXISTS raw_emails_gmail_message_id_key;
 ALTER TABLE transactions       DROP CONSTRAINT IF EXISTS transactions_gmail_message_id_key;
 ALTER TABLE merchant_profiles  DROP CONSTRAINT IF EXISTS merchant_profiles_normalized_name_key;

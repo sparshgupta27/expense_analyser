@@ -31,43 +31,65 @@ function getAuthUrl(overrideRedirectUri, state) {
 }
 
 /**
- * Fetch user info from Google using the access token.
+ * Fetch user info from Google using tokens and OAuth2 client.
+ * Tries id_token payload, OAuth2 userinfo API, and Gmail getProfile fallback.
  * Returns { email, googleSubject, displayName, avatarUrl }.
  */
-async function getUserInfo(accessToken) {
-  return new Promise((resolve) => {
-    const req = https.get(
-      `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${accessToken}`,
-      (res) => {
-        let body = '';
-        res.on('data', (chunk) => (body += chunk));
-        res.on('end', () => {
-          try {
-            const data = JSON.parse(body);
-            resolve({
-              email: data.email || null,
-              googleSubject: data.id || null,
-              displayName: data.name || null,
-              avatarUrl: data.picture || null,
-            });
-          } catch (e) {
-            resolve({ email: null, googleSubject: null, displayName: null, avatarUrl: null });
-          }
-        });
+async function getUserInfo(tokens, oauth2Client) {
+  let email = null;
+  let googleSubject = null;
+  let displayName = null;
+  let avatarUrl = null;
+
+  // 1. Extract from id_token if provided by Google
+  if (tokens.id_token) {
+    try {
+      const parts = tokens.id_token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+        if (payload.email) email = payload.email;
+        if (payload.sub) googleSubject = payload.sub;
+        if (payload.name) displayName = payload.name;
+        if (payload.picture) avatarUrl = payload.picture;
       }
-    );
-    req.on('error', () => resolve({ email: null, googleSubject: null, displayName: null, avatarUrl: null }));
-    req.end();
-  });
+    } catch (e) {}
+  }
+
+  // 2. Try Google OAuth2 userinfo endpoint
+  if (!email && tokens.access_token) {
+    try {
+      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+      const res = await oauth2.userinfo.get();
+      if (res?.data) {
+        email = res.data.email || email;
+        googleSubject = res.data.id || googleSubject;
+        displayName = res.data.name || displayName;
+        avatarUrl = res.data.picture || avatarUrl;
+      }
+    } catch (e) {
+      console.warn('[Auth] oauth2.userinfo.get failed:', e.message);
+    }
+  }
+
+  // 3. Fallback: Gmail API getProfile (guaranteed since gmail.readonly is granted)
+  if (!email && oauth2Client) {
+    try {
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+      const profile = await gmail.users.getProfile({ userId: 'me' });
+      if (profile?.data?.emailAddress) {
+        email = profile.data.emailAddress;
+      }
+    } catch (e) {
+      console.warn('[Auth] gmail.users.getProfile fallback failed:', e.message);
+    }
+  }
+
+  return { email, googleSubject, displayName, avatarUrl };
 }
 
 /**
  * Exchange authorization code for tokens, upsert the user into the users table,
  * and store encrypted OAuth tokens keyed by user_id (UUID).
- *
- * Upsert strategy:
- *  1. Conflict on google_subject (most stable identifier — survives email change).
- *  2. Fallback ON CONFLICT (email) if subject is null / first-time migration.
  *
  * @returns {{ user: { id: string, email: string, displayName: string, avatarUrl: string } }}
  */
@@ -79,47 +101,28 @@ async function handleCallback(code, overrideRedirectUri) {
     throw new Error('Google OAuth did not return an access token');
   }
 
-  const { email: userEmail, googleSubject, displayName, avatarUrl } = await getUserInfo(tokens.access_token);
+  oauth2Client.setCredentials(tokens);
+
+  const { email: userEmail, googleSubject, displayName, avatarUrl } = await getUserInfo(tokens, oauth2Client);
   if (!userEmail) {
     throw new Error('Could not determine user email from Google OAuth tokens');
   }
 
-  // Upsert user — prefer google_subject as stable conflict target
-  // Falls back to email conflict for users who authenticated before
-  // google_subject was tracked.
-  let user;
-  if (googleSubject) {
-    const result = await query(
-      `INSERT INTO users (email, google_subject, display_name, avatar_url, last_login_at, updated_at)
-       VALUES ($1, $2, $3, $4, NOW(), NOW())
-       ON CONFLICT (google_subject)
-       DO UPDATE SET
-         email        = EXCLUDED.email,
-         display_name = EXCLUDED.display_name,
-         avatar_url   = EXCLUDED.avatar_url,
-         last_login_at = NOW(),
-         updated_at   = NOW()
-       RETURNING id, email, display_name, avatar_url`,
-      [userEmail, googleSubject, displayName, avatarUrl]
-    );
-    user = result.rows[0];
-  } else {
-    // Fallback: no subject available (rare edge case)
-    const result = await query(
-      `INSERT INTO users (email, display_name, avatar_url, last_login_at, updated_at)
-       VALUES ($1, $2, $3, NOW(), NOW())
-       ON CONFLICT (email)
-       DO UPDATE SET
-         display_name  = EXCLUDED.display_name,
-         avatar_url    = EXCLUDED.avatar_url,
-         last_login_at = NOW(),
-         updated_at    = NOW()
-       RETURNING id, email, display_name, avatar_url`,
-      [userEmail, displayName, avatarUrl]
-    );
-    user = result.rows[0];
-  }
-
+  // Upsert user — conflict on unique email
+  const userResult = await query(
+    `INSERT INTO users (email, google_subject, display_name, avatar_url, last_login_at, updated_at)
+     VALUES ($1, $2, $3, $4, NOW(), NOW())
+     ON CONFLICT (email)
+     DO UPDATE SET
+       google_subject = COALESCE(EXCLUDED.google_subject, users.google_subject),
+       display_name   = COALESCE(EXCLUDED.display_name, users.display_name),
+       avatar_url     = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
+       last_login_at  = NOW(),
+       updated_at     = NOW()
+     RETURNING id, email, display_name, avatar_url`,
+    [userEmail, googleSubject, displayName, avatarUrl]
+  );
+  const user = userResult.rows[0];
   const userId = user.id;
 
   // Store encrypted Google tokens keyed by (user_id, provider, token_type)
@@ -128,8 +131,8 @@ async function handleCallback(code, overrideRedirectUri) {
       const { encrypted, iv, authTag } = encryptToken(tokens.refresh_token);
       await query(
         `INSERT INTO auth_tokens
-           (user_id, user_email, provider, token_type, encrypted_token, token_iv, token_auth_tag, updated_at)
-         VALUES ($1, $2, 'google', 'refresh', $3, $4, $5, NOW())
+           (user_id, user_email, provider, token_type, token_value, encrypted_token, token_iv, token_auth_tag, updated_at)
+         VALUES ($1, $2, 'google', 'refresh', 'encrypted', $3, $4, $5, NOW())
          ON CONFLICT (user_id, provider, token_type)
          DO UPDATE SET
            encrypted_token = $3,
@@ -148,8 +151,8 @@ async function handleCallback(code, overrideRedirectUri) {
       const { encrypted, iv, authTag } = encryptToken(payload);
       await query(
         `INSERT INTO auth_tokens
-           (user_id, user_email, provider, token_type, encrypted_token, token_iv, token_auth_tag, updated_at)
-         VALUES ($1, $2, 'google', 'access', $3, $4, $5, NOW())
+           (user_id, user_email, provider, token_type, token_value, encrypted_token, token_iv, token_auth_tag, updated_at)
+         VALUES ($1, $2, 'google', 'access', 'encrypted', $3, $4, $5, NOW())
          ON CONFLICT (user_id, provider, token_type)
          DO UPDATE SET
            encrypted_token = $3,

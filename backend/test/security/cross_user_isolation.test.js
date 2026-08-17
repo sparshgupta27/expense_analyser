@@ -50,6 +50,8 @@ function section(title) {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
+test('Cross-User Isolation', () => {
+
 section('1. JWT tenant isolation');
 
 const userA = makeUser('aaaaaaaa-0000-0000-0000-000000000001', 'user-a@example.com');
@@ -201,8 +203,9 @@ console.log(`Results: ${passed} passed, ${failed} failed`);
 if (failures.length > 0) {
   console.error('\nFailed assertions:');
   failures.forEach((f) => console.error(`  ✗ ${f}`));
-  process.exit(1);
+  throw new Error('Test failed');
 } else {
   console.log('\n✅ All cross-user isolation tests passed.');
-  process.exit(0);
 }
+
+});

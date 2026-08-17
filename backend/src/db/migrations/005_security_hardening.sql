@@ -27,8 +27,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uidx_auth_tokens_user_provider_type
 
 -- ============================================================
 -- 3. Enforce NOT NULL on user_id — all backfilled rows must
---    have a valid user_id before this runs.
+--    have a valid user_id before this runs. Orphaned rows are deleted.
 -- ============================================================
+DELETE FROM auth_tokens WHERE user_id IS NULL;
+DELETE FROM raw_emails WHERE user_id IS NULL;
+DELETE FROM transactions WHERE user_id IS NULL;
+DELETE FROM merchant_profiles WHERE user_id IS NULL;
+DELETE FROM subscriptions WHERE user_id IS NULL;
+DELETE FROM category_overrides WHERE user_id IS NULL;
+DELETE FROM sync_state WHERE user_id IS NULL;
+
 ALTER TABLE auth_tokens        ALTER COLUMN user_id SET NOT NULL;
 ALTER TABLE raw_emails         ALTER COLUMN user_id SET NOT NULL;
 ALTER TABLE transactions        ALTER COLUMN user_id SET NOT NULL;

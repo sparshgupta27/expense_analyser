@@ -218,11 +218,38 @@ async function syncEmails({ userId, userEmail }) {
   const gmail = google.gmail({ version: 'v1', auth });
 
   try {
-    const searchQuery = 'debited OR credited OR paid OR spent OR transferred OR UPI OR VPA OR HDFC OR SBI OR ICICI OR Axis OR Kotak OR Swiggy OR Zomato OR Amazon OR Flipkart OR Blinkit OR Zepto OR PhonePe OR Paytm OR GPay OR "Google Pay" OR "Bank Alert" OR "Order Confirmation" OR "Payment Received" OR "Payment Sent" OR invoice OR receipt OR statement';
+    // Read sync checkpoint for incremental fetch
+    let lastSyncAt = null;
+    try {
+      const syncResult = await queryAsUser(userId,
+        'SELECT last_sync_at FROM sync_state WHERE user_id = $1',
+        [userId]
+      );
+      if (syncResult.rows.length > 0 && syncResult.rows[0].last_sync_at) {
+        lastSyncAt = new Date(syncResult.rows[0].last_sync_at);
+      }
+    } catch (e) {
+      console.warn('[Ingestion] Could not read sync_state:', e.message);
+    }
+
+    const syncStartTime = new Date();
+
+    let searchQuery = 'debited OR credited OR paid OR spent OR transferred OR UPI OR VPA OR HDFC OR SBI OR ICICI OR Axis OR Kotak OR Swiggy OR Zomato OR Amazon OR Flipkart OR Blinkit OR Zepto OR PhonePe OR Paytm OR GPay OR "Google Pay" OR "Bank Alert" OR "Order Confirmation" OR "Payment Received" OR "Payment Sent" OR invoice OR receipt OR statement';
+
+    if (lastSyncAt) {
+      // Gmail 'after:' uses epoch seconds
+      const afterEpoch = Math.floor(lastSyncAt.getTime() / 1000);
+      searchQuery += ` after:${afterEpoch}`;
+      console.log(`[Ingestion] Incremental sync for ${userEmail} — fetching emails after ${lastSyncAt.toISOString()}`);
+    } else {
+      // First sync: scan past 12 months (365 days)
+      searchQuery += ' newer_than:365d';
+      console.log(`[Ingestion] Initial 12-month sync for ${userEmail} — fetching past 365 days`);
+    }
 
     let pageToken = null;
     const allMessages = [];
-    const MAX_PAGES = 3;
+    const MAX_PAGES = 10;
     let pageCount = 0;
 
     do {
@@ -246,9 +273,16 @@ async function syncEmails({ userId, userEmail }) {
     let dbSaveErrors = 0;
     let latestTransactionDate = null;
 
-    const BATCH_SIZE = 20;
+    const BATCH_SIZE = 8;
+    const totalBatches = Math.ceil(allMessages.length / BATCH_SIZE);
+
     for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
+      const batchIndex = Math.floor(i / BATCH_SIZE) + 1;
       const batch = allMessages.slice(i, i + BATCH_SIZE);
+      const progressPct = Math.round((i / allMessages.length) * 100);
+
+      console.log(`[GmailSync] ⏳ [${progressPct}%] Batch ${batchIndex}/${totalBatches} (${batch.length} emails)...`);
+
       const results = await Promise.allSettled(
         batch.map(async (msg) => {
           const msgDetail = await gmail.users.messages.get({
@@ -298,9 +332,14 @@ async function syncEmails({ userId, userEmail }) {
                 transaction,
               });
               transaction.saved = true;
+              console.log(
+                `[GmailSync]   ↳ 💳 ${transaction.merchant_normalized} | ₹${transaction.amount} | ` +
+                `${transaction.category} | ${txDate.toISOString().substring(0, 10)}`
+              );
             } catch (dbErr) {
               transaction.saved = false;
               transaction.saveError = dbErr.message;
+              console.warn(`[GmailSync]   ↳ ⚠️ Failed to save ${transaction.merchant_normalized}:`, dbErr.message);
             }
 
             return transaction;
@@ -316,14 +355,13 @@ async function syncEmails({ userId, userEmail }) {
             savedCount++;
           } else {
             dbSaveErrors++;
-            console.warn('[Ingestion] Parsed message but failed to save to Postgres:', result.value.saveError);
           }
           const txDate = new Date(result.value.transaction_date);
           if (!latestTransactionDate || txDate > latestTransactionDate) {
             latestTransactionDate = txDate;
           }
         } else if (result.status === 'rejected') {
-          console.error(`[Ingestion] Error processing message:`, result.reason?.message || result.reason);
+          console.error(`[GmailSync] ⚠️ Error processing message:`, result.reason?.message || result.reason);
         }
       }
     }
@@ -332,7 +370,26 @@ async function syncEmails({ userId, userEmail }) {
       ? `${latestTransactionDate.getFullYear()}-${String(latestTransactionDate.getMonth() + 1).padStart(2, '0')}`
       : null;
 
-    console.log(`[Ingestion] Sync complete for ${userEmail}! Parsed ${parsedCount} transactions. Saved ${savedCount} to Postgres.`);
+    // Update sync checkpoint
+    try {
+      await queryAsUser(userId,
+        `INSERT INTO sync_state (user_id, last_sync_at, emails_fetched)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id)
+         DO UPDATE SET
+           last_sync_at = $2,
+           emails_fetched = sync_state.emails_fetched + $3`,
+        [userId, syncStartTime, allMessages.length]
+      );
+    } catch (e) {
+      console.warn('[GmailSync] Could not update sync_state:', e.message);
+    }
+
+    const durationSec = ((Date.now() - syncStartTime.getTime()) / 1000).toFixed(1);
+    console.log(
+      `[GmailSync] ✨ Sync complete for ${userEmail} in ${durationSec}s! ` +
+      `Scanned ${allMessages.length} emails → parsed ${parsedCount} txns → saved ${savedCount} to PostgreSQL.`
+    );
     return {
       fetched: allMessages.length,
       parsed: parsedCount,

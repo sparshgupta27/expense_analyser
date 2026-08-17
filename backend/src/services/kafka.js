@@ -53,6 +53,10 @@ async function disconnectAll() {
   console.log('[Kafka] Disconnected');
 }
 
+function isConsumerConnected() {
+  return consumerConnected;
+}
+
 module.exports = {
   kafka,
   producer,
@@ -60,4 +64,5 @@ module.exports = {
   connectProducer,
   connectConsumer,
   disconnectAll,
+  isConsumerConnected,
 };

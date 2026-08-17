@@ -33,7 +33,12 @@ const config = {
     clientId: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/auth/google/callback',
-    scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+    scopes: [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'openid',
+    ],
   },
 
   anthropic: {
@@ -86,5 +91,15 @@ const config = {
     timeBucketMinutes: 5,    // 5-minute window for date bucketing
   },
 };
+
+// Enforce critical secrets in production
+if (config.nodeEnv === 'production') {
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'dev-fallback-secret-change-in-production') {
+    throw new Error('FATAL: JWT_SECRET must be set in production. Cannot use default.');
+  }
+  if (!process.env.TOKEN_ENCRYPTION_KEY) {
+    throw new Error('FATAL: TOKEN_ENCRYPTION_KEY must be set in production.');
+  }
+}
 
 module.exports = config;

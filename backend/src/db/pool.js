@@ -5,9 +5,10 @@ const poolConfig = config.postgres.connectionString
   ? {
       connectionString: config.postgres.connectionString,
       ssl: { rejectUnauthorized: false },
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      max: 10,
+      idleTimeoutMillis: 15000,
+      connectionTimeoutMillis: 10000,
+      keepAlive: true,
     }
   : {
       host: config.postgres.host,
@@ -15,19 +16,22 @@ const poolConfig = config.postgres.connectionString
       database: config.postgres.database,
       user: config.postgres.user,
       password: config.postgres.password,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      max: 10,
+      idleTimeoutMillis: 15000,
+      connectionTimeoutMillis: 10000,
+      keepAlive: true,
     };
 
 const pool = new Pool(poolConfig);
 
 pool.on('error', (err) => {
-  console.error('[DB] Unexpected pool error:', err.message);
+  console.warn('[DB] Unexpected pool error (handled):', err.message);
 });
 
-pool.on('connect', () => {
-  console.log('[DB] New client connected to pool');
+pool.on('connect', (client) => {
+  client.on('error', (err) => {
+    console.warn('[DB] Client connection error (handled):', err.message);
+  });
 });
 
 /**

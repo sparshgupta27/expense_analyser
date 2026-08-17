@@ -97,8 +97,8 @@ api.interceptors.response.use(
 export const getDashboardSummary = (month, range = 1) =>
   api.get('/api/dashboard/summary', { params: { month, range } }).then((r) => r.data);
 
-export const getMonthlyTrend = (range = 12) =>
-  api.get('/api/dashboard/monthly-trend', { params: { range } }).then((r) => r.data);
+export const getMonthlyTrend = (month, range = 12) =>
+  api.get('/api/dashboard/monthly-trend', { params: { month, range } }).then((r) => r.data);
 
 export const getCategoryBreakdown = (month, range = 1) =>
   api.get('/api/dashboard/category-breakdown', { params: { month, range } }).then((r) => r.data);
@@ -132,9 +132,6 @@ export const getUpcomingRenewals = () =>
 // ── Auth & Sync ───────────────────────────────────────────────────────────────
 export const getAuthStatus = () =>
   api.get('/auth/status', { timeout: 10000 }).then((r) => r.data);
-
-export const signInAsGuest = () =>
-  api.post('/auth/guest').then((r) => r.data);
 
 export const triggerSync = () =>
   api.post('/api/sync', {}, { timeout: 120000 }).then((r) => r.data);

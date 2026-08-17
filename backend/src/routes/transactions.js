@@ -18,6 +18,12 @@ const VALID_CATEGORIES = [
  * Paginated, filterable transaction list scoped to req.user.id.
  */
 router.get('/', async (req, res) => {
+  if (!req.user) {
+    return res.json({
+      data: [],
+      pagination: { total: 0, page: 1, limit: 20, totalPages: 0 },
+    });
+  }
   try {
     const { id: userId } = req.user;
     const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -45,16 +51,24 @@ router.get('/', async (req, res) => {
       paramIndex++;
     }
 
-    // Date range
-    if (req.query.start_date) {
-      whereClause += ` AND t.transaction_date >= $${paramIndex}`;
-      params.push(req.query.start_date);
-      paramIndex++;
-    }
-    if (req.query.end_date) {
-      whereClause += ` AND t.transaction_date <= $${paramIndex}`;
-      params.push(req.query.end_date);
-      paramIndex++;
+    // Date range filtering (supports month + range or explicit start/end dates)
+    if (req.query.month) {
+      const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
+      whereClause += ` AND t.transaction_date >= TO_DATE($${paramIndex}, 'YYYY-MM') - (($${paramIndex + 1}::int - 1) * INTERVAL '1 month')
+                       AND t.transaction_date <  TO_DATE($${paramIndex}, 'YYYY-MM') + INTERVAL '1 month'`;
+      params.push(req.query.month, rangeMonths);
+      paramIndex += 2;
+    } else {
+      if (req.query.start_date) {
+        whereClause += ` AND t.transaction_date >= $${paramIndex}`;
+        params.push(req.query.start_date);
+        paramIndex++;
+      }
+      if (req.query.end_date) {
+        whereClause += ` AND t.transaction_date <= $${paramIndex}`;
+        params.push(req.query.end_date);
+        paramIndex++;
+      }
     }
 
     // Transaction type
@@ -123,6 +137,7 @@ router.get('/', async (req, res) => {
  * Set a manual category override.
  */
 router.patch('/:id/category', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
   try {
     const { id: userId } = req.user;
     const { id } = req.params;
@@ -158,6 +173,7 @@ router.patch('/:id/category', async (req, res) => {
  * Get a single transaction with its original email.
  */
 router.get('/:id', async (req, res) => {
+  if (!req.user) return res.status(404).json({ error: 'Transaction not found' });
   try {
     const { id: userId } = req.user;
     const { id } = req.params;

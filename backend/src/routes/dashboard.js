@@ -12,11 +12,13 @@ const { generateInsights } = require('../services/insightGenerator');
 const router = express.Router();
 
 /**
- * GET /api/dashboard/monthly-trend?range=12
+ * GET /api/dashboard/monthly-trend?month=YYYY-MM&range=12
  */
 router.get('/monthly-trend', async (req, res) => {
+  if (!req.user) return res.json([]);
   const { id: userId } = req.user;
   const rangeMonths = parseInt(req.query.range || req.query.months) || 12;
+  const month = req.query.month || new Date().toISOString().substring(0, 7);
   try {
     const { rows } = await queryAsUser(userId, `
       SELECT
@@ -26,12 +28,13 @@ router.get('/monthly-trend', async (req, res) => {
         COUNT(*) AS transaction_count
       FROM transactions
       WHERE user_id = $1
-        AND transaction_date >= NOW() - INTERVAL '12 months'
+        AND transaction_date >= TO_DATE($2, 'YYYY-MM') - (($3::int - 1) * INTERVAL '1 month')
+        AND transaction_date <  TO_DATE($2, 'YYYY-MM') + INTERVAL '1 month'
       GROUP BY TO_CHAR(transaction_date, 'YYYY-MM')
       ORDER BY month
-    `, [userId]);
+    `, [userId, month, rangeMonths]);
 
-    res.json(rows.slice(-rangeMonths));
+    res.json(rows);
   } catch (err) {
     console.error('[Dashboard] monthly-trend error:', err.message);
     res.json([]);
@@ -42,25 +45,28 @@ router.get('/monthly-trend', async (req, res) => {
  * GET /api/dashboard/category-breakdown?month=YYYY-MM&range=1
  */
 router.get('/category-breakdown', async (req, res) => {
+  if (!req.user) return res.json([]);
   const { id: userId } = req.user;
   const month = req.query.month || new Date().toISOString().substring(0, 7);
+  const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
 
   try {
     const { rows } = await queryAsUser(userId, `
       SELECT
-        COALESCE(
-          (SELECT co.category FROM category_overrides co WHERE co.transaction_id = t.id AND co.user_id = $1),
-          t.category
-        ) AS category,
-        SUM(amount) AS amount,
+        COALESCE(co.category, t.category) AS category,
+        SUM(t.amount) AS amount,
         COUNT(*) AS count
       FROM transactions t
+      LEFT JOIN category_overrides co
+        ON co.transaction_id = t.id
+       AND co.user_id = t.user_id
       WHERE t.user_id = $1
         AND t.transaction_type = 'debit'
-        AND TO_CHAR(t.transaction_date, 'YYYY-MM') = $2
-      GROUP BY category
+        AND t.transaction_date >= TO_DATE($2, 'YYYY-MM') - (($3::int - 1) * INTERVAL '1 month')
+        AND t.transaction_date <  TO_DATE($2, 'YYYY-MM') + INTERVAL '1 month'
+      GROUP BY COALESCE(co.category, t.category)
       ORDER BY amount DESC
-    `, [userId, month]);
+    `, [userId, month, rangeMonths]);
 
     const total = rows.reduce((s, r) => s + parseFloat(r.amount), 0);
     const result = rows.map((r) => ({
@@ -81,9 +87,11 @@ router.get('/category-breakdown', async (req, res) => {
  * GET /api/dashboard/top-merchants?month=YYYY-MM&limit=10&range=1
  */
 router.get('/top-merchants', async (req, res) => {
+  if (!req.user) return res.json([]);
   const { id: userId } = req.user;
   const month = req.query.month || new Date().toISOString().substring(0, 7);
   const limit = parseInt(req.query.limit) || 10;
+  const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
 
   try {
     const { rows } = await queryAsUser(userId, `
@@ -94,11 +102,12 @@ router.get('/top-merchants', async (req, res) => {
       FROM transactions
       WHERE user_id = $1
         AND transaction_type = 'debit'
-        AND TO_CHAR(transaction_date, 'YYYY-MM') = $2
+        AND transaction_date >= TO_DATE($2, 'YYYY-MM') - (($3::int - 1) * INTERVAL '1 month')
+        AND transaction_date <  TO_DATE($2, 'YYYY-MM') + INTERVAL '1 month'
       GROUP BY merchant_normalized
       ORDER BY amount DESC
-      LIMIT $3
-    `, [userId, month, limit]);
+      LIMIT $4
+    `, [userId, month, rangeMonths, limit]);
 
     res.json(rows.map((r) => ({
       merchant: r.merchant,
@@ -122,6 +131,7 @@ router.get('/anomalies', async (req, res) => {
  * GET /api/dashboard/insights?month=YYYY-MM&range=1
  */
 router.get('/insights', async (req, res) => {
+  if (!req.user) return res.json([]);
   const { id: userId, email: userEmail } = req.user;
   const month = req.query.month || new Date().toISOString().substring(0, 7);
   try {
@@ -137,9 +147,21 @@ router.get('/insights', async (req, res) => {
  * GET /api/dashboard/summary?month=YYYY-MM&range=1
  */
 router.get('/summary', async (req, res) => {
-  const { id: userId } = req.user;
   const month = req.query.month || new Date().toISOString().substring(0, 7);
   const rangeMonths = parseInt(req.query.range || req.query.months) || 1;
+
+  if (!req.user) {
+    return res.json({
+      month,
+      rangeMonths,
+      total_spent: 0,
+      total_income: 0,
+      transaction_count: 0,
+      vs_last_month: 0,
+    });
+  }
+
+  const { id: userId } = req.user;
 
   try {
     const { rows } = await queryAsUser(userId, `
