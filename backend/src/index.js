@@ -42,9 +42,10 @@ app.use(cors({
       allowedOrigins.includes(origin) ||
       origin.includes('localhost') ||
       origin.includes('127.0.0.1') ||
-      origin.endsWith('.vercel.app') ||
-      origin.endsWith('.onrender.com') ||
-      origin.endsWith('.railway.app')
+      origin.includes('vercel.app') ||
+      origin.includes('azurewebsites.net') ||
+      origin.includes('onrender.com') ||
+      origin.includes('railway.app')
     ) {
       return callback(null, true);
     }
