@@ -1,0 +1,15 @@
+{
+  "name": "expense-analyser",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SpendLens Expense Analyser Root",
+  "scripts": {
+    "postinstall": "cd backend && npm install",
+    "start": "node backend/src/index.js",
+    "dev": "node backend/src/index.js",
+    "build": "cd backend && npm install"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
